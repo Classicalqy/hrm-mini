@@ -98,7 +98,9 @@ For 3-SAT, please switch to `SAT` branch to train.
 
 ## Docker support (optional)
 
-We use this docker image for experiments. You can use this image for exact reproducing our experiments.
+We use this docker image for experiments. You can use this image for exact reproducing.
+
+You can check the exact software version in this image.
 
 ```bash
 docker pull sapientai/pytorch-docker:26.02.14.hopper
