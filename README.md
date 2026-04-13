@@ -42,7 +42,7 @@ The original experiments run on one node with 8 H100 GPUs. Sudoku takes about 30
 
 ## Launch main experiment
 
-Sudoku-Extreme 1000 examples
+Sudoku-Extreme 1000 examples. It should take about 4 GPU*hours for H100 (~30 min for 8 H100 GPUs, ~4 hr for 1 H100 GPU).
 
 ```bash
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name tuned_hrm
@@ -84,7 +84,7 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc_per_node 8 train.py --confi
 
 ## Dynamics and Visualization
 
-Install Jupyter and load `visualizations.ipynb`. If you want to evaluate other checkpoint, change the checkpoint path in the first cell.
+Install Jupyter and load `visualizations.ipynb`. If you want to evaluate other checkpoint, change the checkpoint path in the first cell. It should take several minutes.
 
 ## Other tasks
 
