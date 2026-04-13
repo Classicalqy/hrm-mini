@@ -95,3 +95,11 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --confi
 ```
 
 For 3-SAT, please switch to `SAT` branch to train.
+
+## Docker support (optional)
+
+We use this docker image for experiments. You can use this image for exact reproducing our experiments.
+
+```bash
+docker pull sapientai/pytorch-docker:26.02.14.hopper
+```
