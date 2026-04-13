@@ -4,7 +4,7 @@ Minimalistic implementation of Hierarchical Recurrent Model (HRM).
 
 ## Install requirements
 
-Ensure Python and PyTorch is installed, and your machine have at least 1 GPU and total 40 GiB VRAM. Then install pip dependencies:
+Ensure Python and PyTorch is installed, and your machine have at least 1 GPU and total 40 GiB VRAM. Then install pip dependencies, it should be done in 10 minutes:
 
 ```bash
 pip install -r requirements.txt
