@@ -108,6 +108,24 @@ python plot_easy_to_hard.py \
   --output figures/easy_to_hard_rollouts.png
 ```
 
+## Medium-train / Extreme-test experiment
+
+Download the official full Sudoku-Extreme training CSV before running this setting:
+
+```bash
+hf download --repo-type dataset --local-dir ./downloaded-datasets/sudoku-extreme-full sapientinc/sudoku-extreme train.csv
+```
+
+The Medium configurations select 1,000 base puzzles with tdoku ratings 10--30, then retain the existing 200 repeats and online Sudoku symmetry augmentation. Adjust `rating_min` and `rating_max` in `config/data/sudoku_medium.yaml` after inspecting the rating distribution.
+
+```bash
+python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-full --split train
+python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-1k --split test_hard
+
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_hrm
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_rt
+```
+
 ## Dynamics and Visualization
 
 Install Jupyter and load `visualizations.ipynb`. If you want to evaluate other checkpoint, change the checkpoint path in the first cell. It should take several minutes.

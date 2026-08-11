@@ -58,31 +58,76 @@ def collate_fn(batch: list[dict[str, str]], augment: bool) -> tuple[Tensor, Tens
 def _worker_init_fn(worker_id: int, base_seed: int):
     np.random.seed(base_seed + worker_id)
 
-def create_dataloader(split: str, batch_size: int, rank: int, world_size: int, dataset_name: str, augment: bool = False, repeat: int = 1, seed: int = 42):
+
+def _select_training_puzzles(
+    dataset: Dataset,
+    seed: int,
+    rating_min: int | None,
+    rating_max: int | None,
+    num_base_puzzles: int | None,
+) -> Dataset:
+    """Filter official Sudoku-Extreme train data before repeat/augmentation."""
+    if rating_min is not None or rating_max is not None:
+        if "rating" not in dataset.column_names:
+            raise ValueError("rating filtering requires a dataset with a 'rating' column")
+        lower = rating_min if rating_min is not None else -np.inf
+        upper = rating_max if rating_max is not None else np.inf
+        dataset = dataset.filter(lambda rating: lower <= rating <= upper, input_columns="rating")  # pyright: ignore[reportAttributeAccessIssue]
+        if len(dataset) == 0:
+            raise ValueError(f"no training puzzles have ratings in [{rating_min}, {rating_max}]")
+
+    if num_base_puzzles is not None:
+        if num_base_puzzles <= 0:
+            raise ValueError("num_base_puzzles must be positive")
+        if len(dataset) < num_base_puzzles:
+            raise ValueError(f"requested {num_base_puzzles} base puzzles but only {len(dataset)} are available")
+        dataset = dataset.shuffle(seed=seed).select(range(num_base_puzzles))  # pyright: ignore[reportAttributeAccessIssue]
+    return dataset
+
+
+def create_dataloader(
+    split: str,
+    batch_size: int,
+    rank: int,
+    world_size: int,
+    dataset_name: str,
+    augment: bool = False,
+    repeat: int = 1,
+    rating_min: int | None = None,
+    rating_max: int | None = None,
+    num_base_puzzles: int | None = None,
+    num_workers: int = 1,
+    seed: int = 42,
+):
     is_train = split == "train"
     dataset: Dataset = load_dataset(dataset_name, split=split, features = Features({
+        "source": Value("string"),
         "question": Value("string"),
         "answer": Value("string"),
-    })).repeat(repeat if is_train else 1)  # pyright: ignore[reportAssignmentType]
+        "rating": Value("int64"),
+    }))  # pyright: ignore[reportAssignmentType]
+    if is_train:
+        dataset = _select_training_puzzles(dataset, seed, rating_min, rating_max, num_base_puzzles)
+        dataset = dataset.repeat(repeat)  # pyright: ignore[reportAssignmentType]
+    elif rating_min is not None or rating_max is not None or num_base_puzzles is not None:
+        raise ValueError("rating filtering and base-puzzle sampling are training-only options")
 
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        collate_fn=partial(collate_fn, augment=augment and is_train),
+    loader_kwargs: dict[str, object] = {
+        "batch_size": batch_size,
+        "collate_fn": partial(collate_fn, augment=augment and is_train),
+        "sampler": DistributedSampler(
+            dataset, rank=rank, num_replicas=world_size,
+            shuffle=is_train, drop_last=True, seed=seed,
+        ),
+        "drop_last": True,
+        "pin_memory": True,
+        "worker_init_fn": partial(_worker_init_fn, base_seed=seed),
+        "num_workers": num_workers,
+    }
+    if num_workers > 0:
+        loader_kwargs.update(persistent_workers=True, prefetch_factor=2)
 
-        sampler=DistributedSampler(dataset,
-                                   rank=rank, num_replicas=world_size,
-                                   shuffle=is_train, drop_last=True,
-                                   seed=seed),
-        drop_last=True,
-
-        pin_memory=True,
-        persistent_workers=True,
-        worker_init_fn=partial(_worker_init_fn, base_seed=seed),
-
-        num_workers=1,
-        prefetch_factor=2
-    ), {
+    return DataLoader(dataset, **loader_kwargs), {
         # Dataset metadata
         "vocab_size": 10,
         "seq_len": 82,
