@@ -103,7 +103,7 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --confi
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_rt
 ```
 
-The Easy configurations use `rating < 20`; Medium uses `20 <= rating <= 40`. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
+The Easy configurations use `0 <= rating <= 15`; Medium uses `16 <= rating <= 30`. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
 
 ## Dynamics and Visualization
 
