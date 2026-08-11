@@ -82,33 +82,7 @@ MLP Mixer
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc_per_node 8 train.py --config-name tuned_hrm +arch.is_mlp_mixer=True
 ```
 
-## Easy-train / Extreme-test mechanism experiment
-
-This setting trains on 32--40-given, uniquely-solvable Sudoku boards and evaluates on the fixed Sudoku-Extreme `test_hard` split. The HRM and RT architectures are unchanged from the tuned configurations.
-
-Before optimizer step 0, rank 0 deterministically builds a bank of 10,000 independently generated solved boards and uniquely-solvable puzzle masks, then saves it under `downloaded-datasets/`. Other ranks wait for and load the same bank. Training draws a base puzzle from the bank and applies a fresh Sudoku-preserving symmetry each time; this preserves uniqueness while avoiding the narrow single-solution-family distribution and per-sample backtracking cost. The bank filename contains the seed and generation settings, so it is reused safely across restarts and shared by HRM and RT for the same seed.
-
-```bash
-OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_hrm
-OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_rt
-```
-
-To evaluate a checkpoint at multiple external rollout lengths, use its named hard evaluation:
-
-```bash
-python eval.py --ckpt checkpoints/<run>/seed_1/epoch_19.pt --eval-name hard --rollout-cycles 1 2 4 8 16
-```
-
-Each call writes an `eval_result_<checkpoint>_hard.npz` file next to the checkpoint. Aggregate the three seeds for each model and create the comparison curve with:
-
-```bash
-python plot_easy_to_hard.py \
-  --hrm checkpoints/<hrm-run>/seed_{1,2,3}/eval_result_epoch_19_hard.npz \
-  --rt checkpoints/<rt-run>/seed_{1,2,3}/eval_result_epoch_19_hard.npz \
-  --output figures/easy_to_hard_rollouts.png
-```
-
-## Medium-train / Extreme-test experiment
+## Rated train / Extreme-test experiments
 
 Download the official full Sudoku-Extreme training CSV before running this setting:
 
@@ -116,15 +90,20 @@ Download the official full Sudoku-Extreme training CSV before running this setti
 hf download --repo-type dataset --local-dir ./downloaded-datasets/sudoku-extreme-full sapientinc/sudoku-extreme train.csv
 ```
 
-The Medium configurations select 1,000 base puzzles with tdoku ratings 10--30, then retain the existing 200 repeats and online Sudoku symmetry augmentation. Adjust `rating_min` and `rating_max` in `config/data/sudoku_medium.yaml` after inspecting the rating distribution.
+Easy and Medium each select 1,000 base puzzles from the official train split, then retain the original 200 repeats and online Sudoku symmetry augmentation. All three groups use the same original `sudoku-extreme-1k/test_hard` evaluation split.
 
 ```bash
 python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-full --split train
 python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-1k --split test_hard
 
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_hrm
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_rt
+
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_hrm
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_rt
 ```
+
+The Easy configurations use `rating < 20`; Medium uses `20 <= rating <= 40`. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
 
 ## Dynamics and Visualization
 

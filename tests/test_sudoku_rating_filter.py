@@ -41,13 +41,15 @@ class SudokuRatingFilterTests(unittest.TestCase):
         self.assertEqual(metadata, {"vocab_size": 10, "seq_len": 82, "is_causal": False})
 
     @patch("dataset.sudoku.load_dataset")
-    def test_rating_options_are_rejected_for_evaluation(self, load_dataset):
+    def test_evaluation_uses_the_fixed_hard_dataset_without_rating_filter(self, load_dataset):
         load_dataset.return_value = self.dataset
-        with self.assertRaisesRegex(ValueError, "training-only"):
-            create_dataloader(
-                "test_hard", batch_size=2, rank=0, world_size=1, dataset_name="unused",
-                rating_min=10, num_workers=0,
-            )
+        loader, _ = create_dataloader(
+            "test_hard", batch_size=2, rank=0, world_size=1,
+            dataset_name="medium-train", eval_dataset_name="fixed-hard-test",
+            rating_min=10, rating_max=30, num_base_puzzles=3, num_workers=0,
+        )
+        self.assertEqual(load_dataset.call_args.args[0], "fixed-hard-test")
+        self.assertEqual(len(loader.dataset), len(self.dataset))
 
 
 if __name__ == "__main__":

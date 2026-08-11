@@ -91,6 +91,7 @@ def create_dataloader(
     rank: int,
     world_size: int,
     dataset_name: str,
+    eval_dataset_name: str | None = None,
     augment: bool = False,
     repeat: int = 1,
     rating_min: int | None = None,
@@ -100,7 +101,8 @@ def create_dataloader(
     seed: int = 42,
 ):
     is_train = split == "train"
-    dataset: Dataset = load_dataset(dataset_name, split=split, features = Features({
+    source_dataset_name = dataset_name if is_train or eval_dataset_name is None else eval_dataset_name
+    dataset: Dataset = load_dataset(source_dataset_name, split=split, features = Features({
         "source": Value("string"),
         "question": Value("string"),
         "answer": Value("string"),
@@ -109,8 +111,6 @@ def create_dataloader(
     if is_train:
         dataset = _select_training_puzzles(dataset, seed, rating_min, rating_max, num_base_puzzles)
         dataset = dataset.repeat(repeat)  # pyright: ignore[reportAssignmentType]
-    elif rating_min is not None or rating_max is not None or num_base_puzzles is not None:
-        raise ValueError("rating filtering and base-puzzle sampling are training-only options")
 
     loader_kwargs: dict[str, object] = {
         "batch_size": batch_size,

@@ -1,5 +1,5 @@
 defaults:
-  - data: sudoku_easy
+  - data: sudoku_rated_easy
   - _self_
 
 arch:
@@ -13,15 +13,6 @@ arch:
   cycles: 7
   bptt: True
   forward_dtype: bfloat16
-
-evals:
-  - name: hard
-    split: test_hard
-    data:
-      name: sudoku
-      dataset_name: ./downloaded-datasets/sudoku-extreme-1k
-      repeat: 1
-      augment: false
 
 seeds: [1, 2, 3]
 cycles_per_data: 16

@@ -1,10 +1,11 @@
 name: sudoku
 dataset_name: ./downloaded-datasets/sudoku-extreme-full
+eval_dataset_name: ./downloaded-datasets/sudoku-extreme-1k
 
 # tdoku backtrack-count interval. These defaults are a Medium starting point;
 # inspect the downloaded train/test_hard rating histograms before a final run.
-rating_min: 10
-rating_max: 30
+rating_min: 20
+rating_max: 40
 num_base_puzzles: 1000
 
 # Preserve the original 1,000 bases x 200 repeats training budget and online
