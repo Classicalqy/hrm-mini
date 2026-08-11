@@ -82,6 +82,32 @@ MLP Mixer
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc_per_node 8 train.py --config-name tuned_hrm +arch.is_mlp_mixer=True
 ```
 
+## Easy-train / Extreme-test mechanism experiment
+
+This setting trains on 32--40-given, uniquely-solvable Sudoku boards and evaluates on the fixed Sudoku-Extreme `test_hard` split. The HRM and RT architectures are unchanged from the tuned configurations.
+
+Before optimizer step 0, rank 0 deterministically builds a bank of 10,000 independently generated solved boards and uniquely-solvable puzzle masks, then saves it under `downloaded-datasets/`. Other ranks wait for and load the same bank. Training draws a base puzzle from the bank and applies a fresh Sudoku-preserving symmetry each time; this preserves uniqueness while avoiding the narrow single-solution-family distribution and per-sample backtracking cost. The bank filename contains the seed and generation settings, so it is reused safely across restarts and shared by HRM and RT for the same seed.
+
+```bash
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_hrm
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_rt
+```
+
+To evaluate a checkpoint at multiple external rollout lengths, use its named hard evaluation:
+
+```bash
+python eval.py --ckpt checkpoints/<run>/seed_1/epoch_19.pt --eval-name hard --rollout-cycles 1 2 4 8 16
+```
+
+Each call writes an `eval_result_<checkpoint>_hard.npz` file next to the checkpoint. Aggregate the three seeds for each model and create the comparison curve with:
+
+```bash
+python plot_easy_to_hard.py \
+  --hrm checkpoints/<hrm-run>/seed_{1,2,3}/eval_result_epoch_19_hard.npz \
+  --rt checkpoints/<rt-run>/seed_{1,2,3}/eval_result_epoch_19_hard.npz \
+  --output figures/easy_to_hard_rollouts.png
+```
+
 ## Dynamics and Visualization
 
 Install Jupyter and load `visualizations.ipynb`. If you want to evaluate other checkpoint, change the checkpoint path in the first cell. It should take several minutes.

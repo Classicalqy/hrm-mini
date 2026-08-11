@@ -1,0 +1,9 @@
+name: sudoku_easy
+dataset_size: 200000
+base_bank_size: 10000
+clues_min: 32
+clues_max: 40
+max_attempts: 1024
+base_bank_workers: 8
+cache_path: ./downloaded-datasets/sudoku_easy_base_bank_seed{seed}_n{base_bank_size}_c{clues_min}-{clues_max}.npz
+num_workers: 1

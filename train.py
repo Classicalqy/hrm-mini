@@ -29,9 +29,15 @@ class DataConfig(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra='allow')
     name: str
 
+class EvalConfig(pydantic.BaseModel):
+    name: str
+    split: str
+    data: DataConfig
+
 class TrainConfig(pydantic.BaseModel):
     arch: ArchConfig
     data: DataConfig
+    evals: list[EvalConfig] = pydantic.Field(default_factory=list)
 
     seeds: list[int] = [42]
 
@@ -98,6 +104,33 @@ def update_lr(config: TrainConfig, optim: torch.optim.Optimizer, step: int, tota
     return lr
 
 
+def create_loader(data: DataConfig, split: str, batch_size: int, rank: int, world_size: int, seed: int):
+    create_dataloader = load_module(f"dataset.{data.name}@create_dataloader")
+    return create_dataloader(
+        split, batch_size, rank=rank, world_size=world_size, seed=seed, **(data.__pydantic_extra__ or {})
+    )
+
+
+def prepare_training_data(data: DataConfig, seed: int, rank: int, world_size: int) -> None:
+    """Run optional dataset preparation before constructing DataLoader workers."""
+    module = importlib.import_module(f"dataset.{data.name}")
+    prepare = getattr(module, "prepare_base_bank", None)
+    if prepare is not None:
+        prepare(seed=seed, rank=rank, **(data.__pydantic_extra__ or {}))
+        if world_size > 1:
+            dist.barrier()
+
+
+def set_training_epoch(train_loader: Any, epoch: int) -> None:
+    """Advance deterministic online datasets without changing legacy dataset behavior."""
+    dataset = train_loader.dataset
+    if hasattr(dataset, "set_epoch"):
+        dataset.set_epoch(epoch)
+        sampler = train_loader.sampler
+        if hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
+
+
 def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZE: int, RANK: int):
     """Run a full training run for a single seed."""
     # Set random seeds
@@ -105,9 +138,16 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
     torch.cuda.manual_seed_all(seed)
 
     # Initialize Dataloader
-    create_dataloader = load_module(f"dataset.{config.data.name}@create_dataloader")
-    train_loader, train_metadata = create_dataloader("train", config.local_batch_size, rank=RANK, world_size=WORLD_SIZE, seed=seed, **config.data.__pydantic_extra__)  # pyright: ignore[reportCallIssue]
-    eval_loaders = {split_name: create_dataloader(split_name, config.local_batch_size, rank=RANK, world_size=WORLD_SIZE, seed=seed, **config.data.__pydantic_extra__)[0] for split_name in ["test_hard"]}  # pyright: ignore[reportCallIssue]
+    prepare_training_data(config.data, seed, RANK, WORLD_SIZE)
+    train_loader, train_metadata = create_loader(config.data, "train", config.local_batch_size, RANK, WORLD_SIZE, seed)
+    if config.evals:
+        eval_loaders = {
+            evaluation.name: create_loader(evaluation.data, evaluation.split, config.local_batch_size, RANK, WORLD_SIZE, seed)[0]
+            for evaluation in config.evals
+        }
+    else:
+        # Preserve the original experiment behavior for existing configurations.
+        eval_loaders = {"test_hard": create_loader(config.data, "test_hard", config.local_batch_size, RANK, WORLD_SIZE, seed)[0]}
 
     total_steps = int(config.cycles_per_data * len(train_loader) * config.epochs)
 
@@ -151,6 +191,7 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
 
     step = 0
     for epoch in range(config.epochs):
+        set_training_epoch(train_loader, epoch)
         model.train()
         for x, y in train_loader:
             x = x.cuda()
