@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from torch import nn
@@ -12,6 +12,7 @@ class HRMConfig(TransformerConfig):
     H_cycles: int
     L_cycles: int
     bptt: bool
+    readout: Literal["h", "l", "hl"] = "h"
 
     forward_dtype: str
 
@@ -24,13 +25,15 @@ class HRM(nn.Module):
         self.H_cycles = config.H_cycles
         self.L_cycles = config.L_cycles
         self.bptt = config.bptt
+        self.readout = config.readout
 
         # Backbone Layers
         self.H_level = Transformer(config)
         self.L_level = Transformer(config)
         # I/O Layers
         self.embed = CastedScaledEmbedding(config.vocab_size, config.hidden_size, cast_to=dtype)
-        self.lm_head = CastedLinear(config.hidden_size, config.vocab_size, bias=False)
+        readout_size = config.hidden_size * (2 if self.readout == "hl" else 1)
+        self.lm_head = CastedLinear(readout_size, config.vocab_size, bias=False)
 
         # Initial z
         self.zH_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=dtype)), persistent=True)
@@ -50,7 +53,14 @@ class HRM(nn.Module):
         # 1-step grad
         z_L = self.L_level(z_L + z_H + x)
         z_H = self.H_level(z_H + z_L)
-        return dict(z_H=z_H.detach(), z_L=z_L.detach()), self.lm_head(z_H)  # Ensure no gradient moves across carry
+        if self.readout == "h":
+            readout_state = z_H
+        elif self.readout == "l":
+            readout_state = z_L
+        else:  # self.readout == "hl"; validated by HRMConfig.
+            readout_state = torch.cat((z_H, z_L), dim=-1)
+
+        return dict(z_H=z_H.detach(), z_L=z_L.detach()), self.lm_head(readout_state)  # Ensure no gradient moves across carry
 
     @property
     def initial_carry(self) -> Carry:

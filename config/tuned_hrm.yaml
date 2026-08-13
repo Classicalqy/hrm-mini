@@ -19,6 +19,8 @@ arch:
   H_cycles: 2
   L_cycles: 6
   bptt: True
+  # Final-token readout source: h, l, or hl (concatenated H and L states).
+  readout: h
 
   forward_dtype: bfloat16
 

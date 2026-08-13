@@ -82,6 +82,30 @@ MLP Mixer
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc_per_node 8 train.py --config-name tuned_hrm +arch.is_mlp_mixer=True
 ```
 
+### H/L schedule × readout sweep
+
+This repository includes a single-seed, step-matched Sudoku-Extreme sweep over
+`H1L16`, `H2L8`, `H4L4`, `H8L2`, and `H16L1`, with `h`, `l`, and `hl`
+(concatenated H+L) readouts. It also trains the `H2L6` + `h` baseline. Runs are
+sequential and use deterministic checkpoint groups under `checkpoints/hl_readout_sweep/`.
+
+```bash
+# Preview the 16 Hydra configurations without training.
+scripts/run_hl_readout_sweep.sh --dry-run
+
+# Run on 8 GPUs (set NPROC_PER_NODE=1 for a single GPU).
+scripts/run_hl_readout_sweep.sh
+
+# Evaluate final checkpoints and print the 6 x 3 exact-match table.
+scripts/evaluate_hl_readout_sweep.sh
+source /opt/homebrew/Caskroom/miniforge/base/etc/profile.d/conda.sh && conda activate daily
+python scripts/summarize_hl_readout_sweep.py
+```
+
+All conditions retain the tuned HRM hyperparameters and identical optimizer-step/data
+budgets. Their wall-clock time and total FLOPs differ because the number of H updates
+per forward pass differs.
+
 ## Dynamics and Visualization
 
 Install Jupyter and load `visualizations.ipynb`. If you want to evaluate other checkpoint, change the checkpoint path in the first cell. It should take several minutes.
