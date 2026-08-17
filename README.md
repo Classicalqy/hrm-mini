@@ -106,6 +106,19 @@ All conditions retain the tuned HRM hyperparameters and identical optimizer-step
 budgets. Their wall-clock time and total FLOPs differ because the number of H updates
 per forward pass differs.
 
+### H/L effective-diffusion analysis
+
+After the H=2 sweep has produced its final seed-1 checkpoints, collect fixed-parameter
+latent reasoning trajectories for `H2L6-H`, `H2L1-H`, `H2L6-HL`, and `H2L6-L`:
+
+```bash
+python scripts/analyze_hl_diffusion.py --samples 1024
+```
+
+The command writes compressed trajectories, CSV summaries, and five PNG/PDF figure
+groups under `results/diffusion/`. Use `--analyze-only` to regenerate metrics and
+figures from existing trajectory files without rerunning GPU inference.
+
 ## Dynamics and Visualization
 
 Install Jupyter and load `visualizations.ipynb`. If you want to evaluate other checkpoint, change the checkpoint path in the first cell. It should take several minutes.

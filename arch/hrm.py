@@ -1,8 +1,10 @@
+from collections.abc import Callable
 from typing import Any, Literal
 
 import torch
 from torch import nn
 from torch import Tensor
+import torch.nn.functional as F
 
 from arch.layers import CastedScaledEmbedding, CastedLinear, TransformerConfig, Transformer, Carry, trunc_normal_init_
 
@@ -39,6 +41,24 @@ class HRM(nn.Module):
         self.zH_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=dtype)), persistent=True)
         self.zL_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=dtype)), persistent=True)
 
+    def readout_logits(self, z_H: Tensor, z_L: Tensor) -> Tensor:
+        """Decode a pair of H/L states without changing the recurrent dynamics."""
+        if self.readout == "h":
+            readout_state = z_H
+        elif self.readout == "l":
+            readout_state = z_L
+        else:  # self.readout == "hl"; validated by HRMConfig.
+            readout_state = torch.cat((z_H, z_L), dim=-1)
+        return self.lm_head(readout_state)
+
+    def split_hl_readout_logits(self, z_H: Tensor, z_L: Tensor) -> tuple[Tensor, Tensor]:
+        """Return additive H and L logit terms for an HL-readout model."""
+        if self.readout != "hl":
+            raise ValueError("split_hl_readout_logits is only defined for readout='hl'.")
+        hidden_size = z_H.shape[-1]
+        weight = self.lm_head.weight.to(z_H.dtype)
+        return F.linear(z_H, weight[:, :hidden_size]), F.linear(z_L, weight[:, hidden_size:])
+
     def forward(self, carry: Carry, input_ids: Tensor) -> tuple[Carry, Tensor]:
         x = self.embed(input_ids)
 
@@ -53,14 +73,30 @@ class HRM(nn.Module):
         # 1-step grad
         z_L = self.L_level(z_L + z_H + x)
         z_H = self.H_level(z_H + z_L)
-        if self.readout == "h":
-            readout_state = z_H
-        elif self.readout == "l":
-            readout_state = z_L
-        else:  # self.readout == "hl"; validated by HRMConfig.
-            readout_state = torch.cat((z_H, z_L), dim=-1)
+        return dict(z_H=z_H.detach(), z_L=z_L.detach()), self.readout_logits(z_H, z_L)  # Ensure no gradient moves across carry
 
-        return dict(z_H=z_H.detach(), z_L=z_L.detach()), self.lm_head(readout_state)  # Ensure no gradient moves across carry
+    def forward_with_trace(
+        self,
+        carry: Carry,
+        input_ids: Tensor,
+        trace_callback: Callable[[Literal["l", "h"], Tensor, Tensor], None],
+    ) -> tuple[Carry, Tensor]:
+        """Inference-equivalent forward pass that reports every L and H state update.
+
+        The callback receives ``("l", z_H, z_L)`` after each L update and
+        ``("h", z_H, z_L)`` after each H update. It is intended for no-grad
+        trajectory analysis; the ordinary ``forward`` path remains unchanged.
+        """
+        x = self.embed(input_ids)
+        z_H, z_L = carry["z_H"], carry["z_L"]
+        for update_index in range(self.H_cycles * self.L_cycles):
+            z_L = self.L_level(z_L + z_H + x)
+            trace_callback("l", z_H, z_L)
+            if (update_index + 1) % self.L_cycles == 0:
+                z_H = self.H_level(z_H + z_L)
+                trace_callback("h", z_H, z_L)
+
+        return dict(z_H=z_H.detach(), z_L=z_L.detach()), self.readout_logits(z_H, z_L)
 
     @property
     def initial_carry(self) -> Carry:
