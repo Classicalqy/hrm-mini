@@ -43,6 +43,12 @@ class HRM(nn.Module):
 
     def readout_logits(self, z_H: Tensor, z_L: Tensor) -> Tensor:
         """Decode a pair of H/L states without changing the recurrent dynamics."""
+        # At the first L update of a rollout z_H can still be the shared
+        # [hidden] initial buffer, while z_L is already [batch, seq, hidden].
+        # Broadcast it for intermediate trace readouts; ordinary final readouts
+        # already have matching batch/sequence dimensions.
+        if z_H.ndim < z_L.ndim:
+            z_H = z_H.reshape((1,) * (z_L.ndim - z_H.ndim) + z_H.shape).expand_as(z_L)
         if self.readout == "h":
             readout_state = z_H
         elif self.readout == "l":
@@ -55,6 +61,8 @@ class HRM(nn.Module):
         """Return additive H and L logit terms for an HL-readout model."""
         if self.readout != "hl":
             raise ValueError("split_hl_readout_logits is only defined for readout='hl'.")
+        if z_H.ndim < z_L.ndim:
+            z_H = z_H.reshape((1,) * (z_L.ndim - z_H.ndim) + z_H.shape).expand_as(z_L)
         hidden_size = z_H.shape[-1]
         weight = self.lm_head.weight.to(z_H.dtype)
         return F.linear(z_H, weight[:, :hidden_size]), F.linear(z_L, weight[:, hidden_size:])

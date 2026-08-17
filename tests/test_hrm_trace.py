@@ -34,6 +34,15 @@ class HRMTraceTest(unittest.TestCase):
         h_logits, l_logits = model.split_hl_readout_logits(z_h, z_l)
         self.assertTrue(torch.allclose(h_logits + l_logits, model.readout_logits(z_h, z_l)))
 
+    def test_shared_initial_h_state_broadcasts_for_intermediate_readout(self) -> None:
+        model = HRM(tiny_config("hl"))
+        z_h = torch.randn(8)
+        z_l = torch.randn(2, 4, 8)
+        logits = model.readout_logits(z_h, z_l)
+        h_logits, l_logits = model.split_hl_readout_logits(z_h, z_l)
+        self.assertEqual(logits.shape, (2, 4, 11))
+        self.assertTrue(torch.allclose(h_logits + l_logits, logits))
+
     def test_trace_calls_levels_expected_number_of_times(self) -> None:
         model = HRM(tiny_config("h", h_cycles=4, l_cycles=2))
         h_level = CountingIdentity()
