@@ -1,0 +1,10 @@
+__pycache__/
+arch/__pycache__/
+checkpoints/
+dataset/__pycache__/
+downloaded-datasets/
+outputs/
+results/
+scripts/__pychache__/
+wandb/
+
