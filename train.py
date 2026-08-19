@@ -128,13 +128,15 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
         ema=config.ema
     )
 
-    # Initialize checkpointing
+    # Initialize checkpointing.  All ranks participate in training, but rank 0
+    # alone owns shared-filesystem writes to avoid concurrent checkpoint races.
     run_name = f"{group_name}/seed_{seed}"
     checkpoint_dir = os.path.join("checkpoints", run_name)
-    os.makedirs(checkpoint_dir, exist_ok=True)
-
-    with open(os.path.join(checkpoint_dir, "model_config.json"), "w") as f:
-        yaml.dump(config.model_dump(), f)
+    if RANK == 0:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        with open(os.path.join(checkpoint_dir, "model_config.json"), "w") as f:
+            yaml.dump(config.model_dump(), f)
+    dist.barrier()
 
     # -----Train & Eval loop
     progress_bar = None
@@ -177,8 +179,9 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
 
         # Save model
         # Clean '_orig_mod.' prefix added by torch.compile for easier downstream loading
-        torch.save({k.replace("_orig_mod.", ""): v for k, v in model.module.state_dict().items()},
-                   os.path.join(checkpoint_dir, f"epoch_{epoch}.pt"))
+        if RANK == 0:
+            torch.save({k.replace("_orig_mod.", ""): v for k, v in model.module.state_dict().items()},
+                       os.path.join(checkpoint_dir, f"epoch_{epoch}.pt"))
 
         for eval_name, eval_loader in eval_loaders.items():
             num_total_correct = torch.zeros(2, dtype=torch.long, device="cuda")

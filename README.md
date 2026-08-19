@@ -106,6 +106,28 @@ All conditions retain the tuned HRM hyperparameters and identical optimizer-step
 budgets. Their wall-clock time and total FLOPs differ because the number of H updates
 per forward pass differs.
 
+### Three-seed H=2 L/readout sweep with RT baseline
+
+The reasoning-dynamics sweep trains `H2L{1,2,3,4,6,8,16,32}` with each of `h`,
+`l`, and `hl` readouts, plus the original compute-matched `tuned_rt` baseline. Each
+of the 25 conditions runs seeds `1,2,3` sequentially, retaining the default 20 epochs,
+`cycles_per_data=16`, data configuration, and optimizer hyperparameters. Every epoch
+is checkpointed; rank 0 is the sole checkpoint writer, so distributed ranks cannot
+race on the same file.
+
+```bash
+# Validate all 25 Hydra configurations without training.
+scripts/run_h2_l_readout_sweep.sh --dry-run
+
+# Train sequentially on 8 GPUs. Checkpoints use a new root so existing results remain intact.
+scripts/run_h2_l_readout_sweep.sh
+```
+
+By default this writes `epoch_0.pt` through `epoch_19.pt` and `model_config.json` to
+`checkpoints/h2_l_readout_rt_sweep/{H2L*_h|H2L*_l|H2L*_hl|RT}/seed_{1,2,3}/`.
+Use `NPROC_PER_NODE`, `GROUP_ROOT`, or comma-separated `SEEDS` as environment
+variables to override the launch defaults.
+
 ### H/L effective-diffusion analysis
 
 After the H=2 sweep has produced its final seed-1 checkpoints, collect fixed-parameter
