@@ -84,17 +84,17 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc_per_node 8 train.py --confi
 
 ## Rated train / Extreme-test experiments
 
-Download the official full Sudoku-Extreme training CSV before running this setting:
+Download the official full Sudoku-Extreme train and held-out test CSVs before running this setting:
 
 ```bash
-hf download --repo-type dataset --local-dir ./downloaded-datasets/sudoku-extreme-full sapientinc/sudoku-extreme train.csv
+hf download --repo-type dataset --local-dir ./downloaded-datasets/sudoku-extreme-full sapientinc/sudoku-extreme train.csv test.csv
 ```
 
-Easy and Medium each select 1,000 base puzzles from the official train split, then retain the original 200 repeats and online Sudoku symmetry augmentation. All three groups use the same original `sudoku-extreme-1k/test_hard` evaluation split.
+Easy and Medium each select 1,000 base puzzles from the official train split, then retain the original 200 repeats and online Sudoku symmetry augmentation. All three groups evaluate on the disjoint official `sudoku-extreme/test` split, partitioned into Easy, Medium, and Hard by rating. This logs `eval/easy_exact_match`, `eval/medium_exact_match`, and `eval/hard_exact_match` to W&B after every epoch.
 
 ```bash
 python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-full --split train
-python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-1k --split test_hard
+python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-full --split test
 
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_hrm
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_rt
@@ -118,15 +118,13 @@ JSON, and per-cell correctness files. Use matching checkpoints from one seed:
 python cross_evaluate.py \
   --checkpoint easy=checkpoints/<easy-run>/seed_1/epoch_19.pt \
   --checkpoint medium=checkpoints/<medium-run>/seed_1/epoch_19.pt \
-  --checkpoint hard=checkpoints/<hard-run>/seed_1/epoch_19.pt \
-  --eval-dataset-name <held-out-dataset> --split <held-out-split>
+  --checkpoint hard=checkpoints/<hard-run>/seed_1/epoch_19.pt
 ```
 
 The rating bands are `easy: 0–15`, `medium: 16–30`, and `hard: >=31`, matching
-the training configs. Results default to `results/cross_evaluation/`. The
-existing training-time `easy/medium/hard -> test_hard` evaluation is unchanged.
-The chosen evaluation split must contain examples from all three bands; the
-script stops with a clear error rather than reporting an empty test cell.
+the training configs. Results default to `results/cross_evaluation/` and use
+the checkpoint's held-out `sudoku-extreme/test` data by default. The script
+stops with a clear error rather than reporting an empty test cell.
 
 ## Dynamics and Visualization
 

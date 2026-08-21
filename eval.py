@@ -31,6 +31,9 @@ def evaluate_checkpoint(
 
     create_dataloader = load_module(f"dataset.{config.data.name}@create_dataloader")
     data_kwargs = dict(config.data.__pydantic_extra__ or {})
+    # This controls the training loop's periodic metrics and is not a loader
+    # argument for standalone evaluation.
+    data_kwargs.pop("eval_sets", None)
     if eval_rating_min is not None:
         data_kwargs["eval_rating_min"] = eval_rating_min
     if eval_rating_max is not None:

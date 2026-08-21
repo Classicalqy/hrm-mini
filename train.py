@@ -106,8 +106,23 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
 
     # Initialize Dataloader
     create_dataloader = load_module(f"dataset.{config.data.name}@create_dataloader")
-    train_loader, train_metadata = create_dataloader("train", config.local_batch_size, rank=RANK, world_size=WORLD_SIZE, seed=seed, **config.data.__pydantic_extra__)  # pyright: ignore[reportCallIssue]
-    eval_loaders = {split_name: create_dataloader(split_name, config.local_batch_size, rank=RANK, world_size=WORLD_SIZE, seed=seed, **config.data.__pydantic_extra__)[0] for split_name in ["test_hard"]}  # pyright: ignore[reportCallIssue]
+    data_kwargs = dict(config.data.__pydantic_extra__ or {})
+    # ``eval_sets`` is orchestration metadata, not an argument understood by
+    # dataset.create_dataloader. Keeping it in the data config makes every
+    # architecture that uses the config log the same evaluation matrix.
+    eval_sets = data_kwargs.pop("eval_sets", {"test_hard": {"split": "test_hard"}})
+    train_loader, train_metadata = create_dataloader(
+        "train", config.local_batch_size, rank=RANK, world_size=WORLD_SIZE,
+        seed=seed, **data_kwargs,  # pyright: ignore[reportCallIssue]
+    )
+    eval_loaders = {}
+    for eval_name, eval_options in eval_sets.items():
+        eval_kwargs = data_kwargs | eval_options
+        eval_split = eval_kwargs.pop("split", "test_hard")
+        eval_loaders[eval_name] = create_dataloader(
+            eval_split, config.local_batch_size, rank=RANK, world_size=WORLD_SIZE,
+            seed=seed, **eval_kwargs,  # pyright: ignore[reportCallIssue]
+        )[0]
 
     total_steps = int(config.cycles_per_data * len(train_loader) * config.epochs)
 

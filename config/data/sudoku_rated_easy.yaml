@@ -1,6 +1,6 @@
 name: sudoku
 dataset_name: ./downloaded-datasets/sudoku-extreme-full
-eval_dataset_name: ./downloaded-datasets/sudoku-extreme-1k
+eval_dataset_name: ./downloaded-datasets/sudoku-extreme-full
 
 # The loader's rating bounds are inclusive. Sudoku ratings are non-negative.
 rating_min: 0
@@ -8,3 +8,18 @@ rating_max: 15
 num_base_puzzles: 1000
 repeat: 200
 augment: True
+
+# All models trained with this config are evaluated on the held-out test.csv
+# from Sudoku-Extreme, split by the same inclusive rating bands.
+eval_sets:
+  easy:
+    split: test
+    eval_rating_min: 0
+    eval_rating_max: 15
+  medium:
+    split: test
+    eval_rating_min: 16
+    eval_rating_max: 30
+  hard:
+    split: test
+    eval_rating_min: 31

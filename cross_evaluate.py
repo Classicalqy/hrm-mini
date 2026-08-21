@@ -49,7 +49,7 @@ def main():
         metavar="DIFFICULTY=PATH",
         help="Repeat once each for easy, medium, and hard.",
     )
-    parser.add_argument("--split", default="test_hard", help="Dataset split to partition by rating (default: test_hard)")
+    parser.add_argument("--split", default="test", help="Dataset split to partition by rating (default: test)")
     parser.add_argument(
         "--eval-dataset-name",
         help="Override the checkpoint's eval dataset. The selected split must contain all three rating bands.",
