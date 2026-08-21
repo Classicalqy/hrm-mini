@@ -108,6 +108,26 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --confi
 
 The Easy configurations use `0 <= rating <= 15`; Medium uses `16 <= rating <= 30`; Hard uses `rating > 30`. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
 
+### Cross-evaluate Easy / Medium / Hard
+
+`cross_evaluate.py` evaluates each of the three trained checkpoints on all
+three rating bands of `test_hard`, and writes a 3×3 accuracy matrix plus a CSV,
+JSON, and per-cell correctness files. Use matching checkpoints from one seed:
+
+```bash
+python cross_evaluate.py \
+  --checkpoint easy=checkpoints/<easy-run>/seed_1/epoch_19.pt \
+  --checkpoint medium=checkpoints/<medium-run>/seed_1/epoch_19.pt \
+  --checkpoint hard=checkpoints/<hard-run>/seed_1/epoch_19.pt \
+  --eval-dataset-name <held-out-dataset> --split <held-out-split>
+```
+
+The rating bands are `easy: 0–15`, `medium: 16–30`, and `hard: >=31`, matching
+the training configs. Results default to `results/cross_evaluation/`. The
+existing training-time `easy/medium/hard -> test_hard` evaluation is unchanged.
+The chosen evaluation split must contain examples from all three bands; the
+script stops with a clear error rather than reporting an empty test cell.
+
 ## Dynamics and Visualization
 
 Install Jupyter and load `visualizations.ipynb`. If you want to evaluate other checkpoint, change the checkpoint path in the first cell. It should take several minutes.

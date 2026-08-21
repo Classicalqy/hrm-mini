@@ -85,6 +85,25 @@ def _select_training_puzzles(
     return dataset
 
 
+def _filter_evaluation_puzzles(
+    dataset: Dataset,
+    rating_min: int | None,
+    rating_max: int | None,
+) -> Dataset:
+    """Optionally restrict an evaluation split to a Sudoku rating interval."""
+    if rating_min is None and rating_max is None:
+        return dataset
+    if "rating" not in dataset.column_names:
+        raise ValueError("evaluation rating filtering requires a dataset with a 'rating' column")
+
+    lower = rating_min if rating_min is not None else -np.inf
+    upper = rating_max if rating_max is not None else np.inf
+    dataset = dataset.filter(lambda rating: lower <= rating <= upper, input_columns="rating")  # pyright: ignore[reportAttributeAccessIssue]
+    if len(dataset) == 0:
+        raise ValueError(f"no evaluation puzzles have ratings in [{rating_min}, {rating_max}]")
+    return dataset
+
+
 def create_dataloader(
     split: str,
     batch_size: int,
@@ -97,8 +116,11 @@ def create_dataloader(
     rating_min: int | None = None,
     rating_max: int | None = None,
     num_base_puzzles: int | None = None,
+    eval_rating_min: int | None = None,
+    eval_rating_max: int | None = None,
     num_workers: int = 1,
     seed: int = 42,
+    drop_last: bool = True,
 ):
     is_train = split == "train"
     source_dataset_name = dataset_name if is_train or eval_dataset_name is None else eval_dataset_name
@@ -111,15 +133,19 @@ def create_dataloader(
     if is_train:
         dataset = _select_training_puzzles(dataset, seed, rating_min, rating_max, num_base_puzzles)
         dataset = dataset.repeat(repeat)  # pyright: ignore[reportAssignmentType]
+    else:
+        # Keep the historical evaluation behaviour unless explicit eval-only
+        # bounds are supplied. Training bounds must not leak into test data.
+        dataset = _filter_evaluation_puzzles(dataset, eval_rating_min, eval_rating_max)
 
     loader_kwargs: dict[str, object] = {
         "batch_size": batch_size,
         "collate_fn": partial(collate_fn, augment=augment and is_train),
         "sampler": DistributedSampler(
             dataset, rank=rank, num_replicas=world_size,
-            shuffle=is_train, drop_last=True, seed=seed,
+            shuffle=is_train, drop_last=drop_last, seed=seed,
         ),
-        "drop_last": True,
+        "drop_last": drop_last,
         "pin_memory": True,
         "worker_init_fn": partial(_worker_init_fn, base_seed=seed),
         "num_workers": num_workers,

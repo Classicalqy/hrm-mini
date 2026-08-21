@@ -51,6 +51,18 @@ class SudokuRatingFilterTests(unittest.TestCase):
         self.assertEqual(load_dataset.call_args.args[0], "fixed-hard-test")
         self.assertEqual(len(loader.dataset), len(self.dataset))
 
+    @patch("dataset.sudoku.load_dataset")
+    def test_evaluation_can_use_its_own_rating_bounds(self, load_dataset):
+        load_dataset.return_value = self.dataset
+        loader, _ = create_dataloader(
+            "test_hard", batch_size=2, rank=0, world_size=1,
+            dataset_name="easy-train", eval_dataset_name="fixed-test",
+            rating_min=0, rating_max=15,
+            eval_rating_min=16, eval_rating_max=30, num_workers=0,
+        )
+        self.assertEqual(load_dataset.call_args.args[0], "fixed-test")
+        self.assertEqual(loader.dataset["rating"], [20, 30])
+
 
 if __name__ == "__main__":
     unittest.main()

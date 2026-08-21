@@ -22,7 +22,16 @@ def collate_fn(batch: list[dict[str, str]]) -> tuple[Tensor, Tensor]:
 
     return torch.from_numpy(np.stack(xs, axis=0)), torch.from_numpy(np.stack(ys, axis=0))
 
-def create_dataloader(split: str, batch_size: int, rank: int, world_size: int, dataset_name: str, repeat: int = 1, seed: int = 42):
+def create_dataloader(
+    split: str,
+    batch_size: int,
+    rank: int,
+    world_size: int,
+    dataset_name: str,
+    repeat: int = 1,
+    seed: int = 42,
+    drop_last: bool = True,
+):
     is_train = split == "train"
     dataset = load_dataset(dataset_name, split=split, features = Features({
         "question": Value("string"),
@@ -37,9 +46,9 @@ def create_dataloader(split: str, batch_size: int, rank: int, world_size: int, d
 
         sampler=DistributedSampler(dataset,  # pyright: ignore[reportArgumentType]
                                    rank=rank, num_replicas=world_size,
-                                   shuffle=is_train, drop_last=True,
+                                   shuffle=is_train, drop_last=drop_last,
                                    seed=seed),
-        drop_last=True,
+        drop_last=drop_last,
 
         pin_memory=True,
         persistent_workers=True,
