@@ -20,7 +20,7 @@ from eval import evaluate_checkpoint
 DIFFICULTY_BOUNDS: dict[str, tuple[int | None, int | None]] = {
     "easy": (0, 15),
     "medium": (16, 30),
-    "hard": (31, None),
+    "hard": (51, None),
 }
 
 

@@ -2,8 +2,8 @@ name: sudoku
 dataset_name: ./downloaded-datasets/sudoku-extreme-full
 eval_dataset_name: ./downloaded-datasets/sudoku-extreme-full
 
-# The loader's bounds are inclusive, hence min 31 implements rating > 30.
-rating_min: 31
+# The loader's bounds are inclusive, hence min 51 implements rating > 50.
+rating_min: 51
 num_base_puzzles: 1000
 repeat: 200
 augment: True
@@ -21,7 +21,7 @@ eval_sets:
     eval_rating_max: 30
   hard:
     split: test
-    eval_rating_min: 31
+    eval_rating_min: 51
 
 # A fixed, balanced held-out sample keeps the per-epoch cross-evaluation
 # affordable and directly comparable across architectures and training seeds.

@@ -107,7 +107,7 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --confi
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name hard_to_hard_rt
 ```
 
-The Easy configurations use `0 <= rating <= 15`; Medium uses `16 <= rating <= 30`; Hard uses `rating > 30`. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
+The Easy configurations use `0 <= rating <= 15`; Medium uses `16 <= rating <= 30`; Hard uses `rating > 50`. Ratings `31–50` are intentionally excluded from these three experimental groups. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
 
 ### Cross-evaluate Easy / Medium / Hard
 
@@ -122,7 +122,7 @@ python cross_evaluate.py \
   --checkpoint hard=checkpoints/<hard-run>/seed_1/epoch_19.pt
 ```
 
-The rating bands are `easy: 0–15`, `medium: 16–30`, and `hard: >=31`, matching
+The rating bands are `easy: 0–15`, `medium: 16–30`, and `hard: >=51`, matching
 the training configs. Results default to `results/cross_evaluation/` and use
 the checkpoint's held-out `sudoku-extreme/test` data by default. The script
 stops with a clear error rather than reporting an empty test cell.

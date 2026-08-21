@@ -22,7 +22,7 @@ eval_sets:
     eval_rating_max: 30
   hard:
     split: test
-    eval_rating_min: 31
+    eval_rating_min: 51
 
 # A fixed, balanced held-out sample keeps the per-epoch cross-evaluation
 # affordable and directly comparable across architectures and training seeds.
