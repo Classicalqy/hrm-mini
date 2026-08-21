@@ -89,18 +89,28 @@ def _filter_evaluation_puzzles(
     dataset: Dataset,
     rating_min: int | None,
     rating_max: int | None,
+    num_base_puzzles: int | None,
+    seed: int,
 ) -> Dataset:
-    """Optionally restrict an evaluation split to a Sudoku rating interval."""
-    if rating_min is None and rating_max is None:
-        return dataset
-    if "rating" not in dataset.column_names:
-        raise ValueError("evaluation rating filtering requires a dataset with a 'rating' column")
+    """Filter and deterministically subsample an evaluation split."""
+    if rating_min is not None or rating_max is not None:
+        if "rating" not in dataset.column_names:
+            raise ValueError("evaluation rating filtering requires a dataset with a 'rating' column")
 
-    lower = rating_min if rating_min is not None else -np.inf
-    upper = rating_max if rating_max is not None else np.inf
-    dataset = dataset.filter(lambda rating: lower <= rating <= upper, input_columns="rating")  # pyright: ignore[reportAttributeAccessIssue]
-    if len(dataset) == 0:
-        raise ValueError(f"no evaluation puzzles have ratings in [{rating_min}, {rating_max}]")
+        lower = rating_min if rating_min is not None else -np.inf
+        upper = rating_max if rating_max is not None else np.inf
+        dataset = dataset.filter(lambda rating: lower <= rating <= upper, input_columns="rating")  # pyright: ignore[reportAttributeAccessIssue]
+        if len(dataset) == 0:
+            raise ValueError(f"no evaluation puzzles have ratings in [{rating_min}, {rating_max}]")
+
+    if num_base_puzzles is not None:
+        if num_base_puzzles <= 0:
+            raise ValueError("eval_num_base_puzzles must be positive")
+        if len(dataset) < num_base_puzzles:
+            raise ValueError(
+                f"requested {num_base_puzzles} evaluation puzzles but only {len(dataset)} are available"
+            )
+        dataset = dataset.shuffle(seed=seed).select(range(num_base_puzzles))  # pyright: ignore[reportAttributeAccessIssue]
     return dataset
 
 
@@ -118,6 +128,8 @@ def create_dataloader(
     num_base_puzzles: int | None = None,
     eval_rating_min: int | None = None,
     eval_rating_max: int | None = None,
+    eval_num_base_puzzles: int | None = None,
+    eval_seed: int = 42,
     num_workers: int = 1,
     seed: int = 42,
     drop_last: bool = True,
@@ -136,7 +148,9 @@ def create_dataloader(
     else:
         # Keep the historical evaluation behaviour unless explicit eval-only
         # bounds are supplied. Training bounds must not leak into test data.
-        dataset = _filter_evaluation_puzzles(dataset, eval_rating_min, eval_rating_max)
+        dataset = _filter_evaluation_puzzles(
+            dataset, eval_rating_min, eval_rating_max, eval_num_base_puzzles, eval_seed
+        )
 
     loader_kwargs: dict[str, object] = {
         "batch_size": batch_size,

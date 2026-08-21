@@ -91,6 +91,7 @@ hf download --repo-type dataset --local-dir ./downloaded-datasets/sudoku-extreme
 ```
 
 Easy and Medium each select 1,000 base puzzles from the official train split, then retain the original 200 repeats and online Sudoku symmetry augmentation. All three groups evaluate on the disjoint official `sudoku-extreme/test` split, partitioned into Easy, Medium, and Hard by rating. This logs `eval/easy_exact_match`, `eval/medium_exact_match`, and `eval/hard_exact_match` to W&B after every epoch.
+Each metric uses a fixed 10,000-puzzle sample from its rating band, shared across all seeds and both architectures.
 
 ```bash
 python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-full --split train

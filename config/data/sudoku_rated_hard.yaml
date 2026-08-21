@@ -22,3 +22,8 @@ eval_sets:
   hard:
     split: test
     eval_rating_min: 31
+
+# A fixed, balanced held-out sample keeps the per-epoch cross-evaluation
+# affordable and directly comparable across architectures and training seeds.
+eval_num_base_puzzles: 10000
+eval_seed: 42

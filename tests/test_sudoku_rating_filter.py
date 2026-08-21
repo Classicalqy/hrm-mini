@@ -63,6 +63,23 @@ class SudokuRatingFilterTests(unittest.TestCase):
         self.assertEqual(load_dataset.call_args.args[0], "fixed-test")
         self.assertEqual(loader.dataset["rating"], [20, 30])
 
+    @patch("dataset.sudoku.load_dataset")
+    def test_evaluation_uses_a_fixed_size_deterministic_sample(self, load_dataset):
+        load_dataset.return_value = self.dataset
+        first, _ = create_dataloader(
+            "test", batch_size=2, rank=0, world_size=1, dataset_name="unused",
+            eval_rating_min=16, eval_rating_max=40,
+            eval_num_base_puzzles=2, eval_seed=7, num_workers=0,
+        )
+        second, _ = create_dataloader(
+            "test", batch_size=2, rank=0, world_size=1, dataset_name="unused",
+            eval_rating_min=16, eval_rating_max=40,
+            eval_num_base_puzzles=2, eval_seed=7, num_workers=0,
+        )
+        self.assertEqual(len(first.dataset), 2)
+        self.assertEqual(first.dataset["rating"], second.dataset["rating"])
+        self.assertTrue(set(first.dataset["rating"]).issubset({20, 30, 40}))
+
 
 if __name__ == "__main__":
     unittest.main()
