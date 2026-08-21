@@ -10,12 +10,13 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
-
+source /home/chenguozhang/miniconda3/etc/profile.d/conda.sh
+conda activate hrm
 nproc_per_node="${NPROC_PER_NODE:-8}"
 group_root="${GROUP_ROOT:-h2_l_readout_rt_sweep}"
 seeds_csv="${SEEDS:-1,2,3}"
 dry_run=false
-l_values=(1 2 3 4 6 8 16 32)
+l_values=(6 8 16 32)
 readouts=(h l hl)
 
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -58,7 +59,8 @@ assert config.arch.readout == readout
 assert config.seeds == seeds
 PY
     else
-        MLP_TASK_NAME="$group_name" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+        export MLP_TASK_NAME="$group_name"
+        WANDB_MODE=offline OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
             torchrun --nproc-per-node "$nproc_per_node" train.py --config-name tuned_hrm \
             "seeds=[$seeds_csv]" \
             "arch.H_cycles=2" \
@@ -89,7 +91,8 @@ assert config.arch.cycles == 7
 assert config.seeds == seeds
 PY
     else
-        MLP_TASK_NAME="$group_name" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+        export MLP_TASK_NAME="$group_name"
+        WANDB_MODE=offline OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
             torchrun --nproc-per-node "$nproc_per_node" train.py --config-name tuned_rt \
             "seeds=[$seeds_csv]"
     fi
