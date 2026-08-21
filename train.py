@@ -117,7 +117,9 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
     )
     eval_loaders = {}
     for eval_name, eval_options in eval_sets.items():
-        eval_kwargs = data_kwargs | eval_options
+        # Hydra keeps nested YAML mappings as DictConfig objects. Convert the
+        # per-split options before merging with the plain pydantic extras dict.
+        eval_kwargs = data_kwargs | dict(eval_options)
         eval_split = eval_kwargs.pop("split", "test_hard")
         eval_loaders[eval_name] = create_dataloader(
             eval_split, config.local_batch_size, rank=RANK, world_size=WORLD_SIZE,
