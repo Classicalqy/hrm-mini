@@ -159,6 +159,18 @@ def discover_rt_run(directory: Path) -> RunDirectory:
     return RunDirectory("rt", "RT", int(seed_match["seed"]), directory, config, None, "rt")
 
 
+def discover_rt_runs(root: Path) -> list[RunDirectory]:
+    """Discover the standard RT baseline stored alongside the H2L sweep."""
+    rt_root = root / "RT"
+    if not rt_root.is_dir():
+        return []
+    runs = []
+    for seed_dir in sorted(path for path in rt_root.iterdir() if path.is_dir()):
+        if SEED_DIRECTORY.fullmatch(seed_dir.name) is not None and epoch_checkpoints(seed_dir):
+            runs.append(discover_rt_run(seed_dir))
+    return runs
+
+
 def build_model(run: RunDirectory, checkpoint: Path, metadata: dict[str, Any], device: torch.device) -> torch.nn.Module:
     model_cls = load_module(f"arch.{run.config.arch.name}")
     model = model_cls((run.config.arch.__pydantic_extra__ or {}) | metadata).to(device)
@@ -523,7 +535,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoints-root", type=Path, default=Path("checkpoints/h2_l_readout_sweep"))
     parser.add_argument("--output-dir", type=Path, default=Path("results/long_rollout_dynamics"))
-    parser.add_argument("--rt-checkpoint-dir", type=Path, help="Optional RT seed_N checkpoint directory.")
+    parser.add_argument("--rt-checkpoint-dir", type=Path, help="Optional additional RT seed_N directory; RT/seed_* under --checkpoints-root is discovered automatically.")
     parser.add_argument("--samples", type=int, default=64, help="Fixed test_hard puzzles used for each rollout.")
     parser.add_argument("--max-l-updates", type=int, default=4096, help="Requested underlying L/recurrent updates.")
     parser.add_argument("--lag-points", type=int, default=16, help="Log₂-spaced lag points per time segment.")
@@ -552,8 +564,14 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     runs = discover_hrm_runs(args.checkpoints_root)
+    runs.extend(discover_rt_runs(args.checkpoints_root))
     if args.rt_checkpoint_dir is not None:
-        runs.append(discover_rt_run(args.rt_checkpoint_dir))
+        additional_rt = discover_rt_run(args.rt_checkpoint_dir)
+        if (additional_rt.kind, additional_rt.condition, additional_rt.seed) in {
+            (run.kind, run.condition, run.seed) for run in runs
+        }:
+            parser.error(f"RT run {args.rt_checkpoint_dir} duplicates one already found under --checkpoints-root.")
+        runs.append(additional_rt)
     if args.shard_index is not None:
         runs = runs[args.shard_index::args.num_shards]
     if not runs:
