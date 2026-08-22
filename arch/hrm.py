@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any, Literal
 
 import torch
@@ -88,21 +88,29 @@ class HRM(nn.Module):
         carry: Carry,
         input_ids: Tensor,
         trace_callback: Callable[[Literal["l", "h"], Tensor, Tensor], None],
+        events: Collection[Literal["l", "h"]] = ("l", "h"),
     ) -> tuple[Carry, Tensor]:
         """Inference-equivalent forward pass that reports every L and H state update.
 
-        The callback receives ``("l", z_H, z_L)`` after each L update and
-        ``("h", z_H, z_L)`` after each H update. It is intended for no-grad
-        trajectory analysis; the ordinary ``forward`` path remains unchanged.
+        The callback receives ``("l", z_H, z_L)`` after each requested L update
+        and ``("h", z_H, z_L)`` after each requested H update.  ``events`` can
+        be used to request only H-boundary states during long rollouts, avoiding
+        needless callback work. It is intended for no-grad trajectory analysis;
+        the ordinary ``forward`` path remains unchanged.
         """
+        invalid_events = set(events) - {"l", "h"}
+        if invalid_events:
+            raise ValueError(f"Unsupported trace events: {sorted(invalid_events)}")
         x = self.embed(input_ids)
         z_H, z_L = carry["z_H"], carry["z_L"]
         for update_index in range(self.H_cycles * self.L_cycles):
             z_L = self.L_level(z_L + z_H + x)
-            trace_callback("l", z_H, z_L)
+            if "l" in events:
+                trace_callback("l", z_H, z_L)
             if (update_index + 1) % self.L_cycles == 0:
                 z_H = self.H_level(z_H + z_L)
-                trace_callback("h", z_H, z_L)
+                if "h" in events:
+                    trace_callback("h", z_H, z_L)
 
         return dict(z_H=z_H.detach(), z_L=z_L.detach()), self.readout_logits(z_H, z_L)
 
