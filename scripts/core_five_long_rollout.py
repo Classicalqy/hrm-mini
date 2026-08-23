@@ -35,17 +35,18 @@ from scripts.analyze_long_rollout_msd import (
 )
 from scripts.long_rollout_msd_utils import (
     STATE_NAMES,
+    log_spaced_lags,
     local_log_slope,
     rt_state_msd_per_puzzle,
-    segment_boundaries,
     segment_for_pair,
-    segment_lags,
     state_msd_per_puzzle,
 )
 
 
 CORE_CONDITIONS = ("H2L1_h", "H2L6_h", "H2L6_l", "H2L6_hl", "RT")
 CORE_ORDER = {condition: index for index, condition in enumerate(CORE_CONDITIONS)}
+CORE_PHYSICAL_TIME_UNIT = 6
+CORE_ANALYSIS_SCHEME = "absolute_l_updates_v1"
 SELECTION_FIELDS = [
     "kind", "condition", "readout", "train_l", "seed", "epoch", "checkpoint",
     "test_exact_match", "cell_accuracy", "evaluated_examples", "selection_completed",
@@ -53,7 +54,7 @@ SELECTION_FIELDS = [
 ROLLOUT_FIELDS = [
     "kind", "condition", "readout", "train_l", "seed", "best_epoch", "checkpoint", "samples",
     "sample_seed", "sample_manifest_sha256", "requested_l_updates", "actual_l_updates", "total_blocks",
-    "segment_boundaries_blocks", "lag_blocks", "state_shape", "per_puzzle_file",
+    "segment_clock", "segment_boundaries_blocks", "segment_boundaries_l_updates", "lag_blocks", "state_shape", "per_puzzle_file",
 ]
 PUZZLE_SUMMARY_FIELDS = [
     "kind", "condition", "readout", "train_l", "seed", "state", "segment", "lag_blocks", "lag_l_updates",
@@ -230,19 +231,66 @@ def _advance_rt(model: torch.nn.Module, carry: Carry, x: torch.Tensor) -> tuple[
     return carry, state
 
 
+def absolute_segment_boundaries(max_l_updates: int, time_unit: int = CORE_PHYSICAL_TIME_UNIT) -> np.ndarray:
+    """Shared physical-time windows for every core-five condition.
+
+    States for L=6 HRM are only observed after an L block, so all boundaries and
+    lags must lie on the common six-L-update grid.  At the standard 4,096-update
+    budget this yields ``[0, 48, 192, 768, 4092]``: log-like windows with at
+    least eight H-boundaries in the first H2L6 window.
+    """
+    if time_unit < 1:
+        raise ValueError("time_unit must be positive.")
+    endpoint = max_l_updates // time_unit * time_unit
+    if endpoint < 8 * time_unit:
+        raise ValueError(f"Need at least {8 * time_unit} L updates for absolute-time core windows.")
+    preferred = np.asarray((0, 8 * time_unit, 32 * time_unit, 128 * time_unit, endpoint), dtype=np.int64)
+    if endpoint > 128 * time_unit:
+        return preferred
+    # Preserve four valid windows for short smoke tests, while still aligning all
+    # boundaries to the common physical-time grid.
+    boundaries = np.linspace(0, endpoint, num=5, dtype=np.int64)
+    boundaries = boundaries // time_unit * time_unit
+    boundaries[0], boundaries[-1] = 0, endpoint
+    for index in range(1, len(boundaries)):
+        boundaries[index] = max(boundaries[index], boundaries[index - 1] + time_unit)
+    if np.any(np.diff(boundaries) <= 0):
+        raise ValueError(f"Could not construct four absolute-time windows for {endpoint} updates.")
+    return boundaries
+
+
+def absolute_lags(boundaries: np.ndarray, lag_points: int, time_unit: int = CORE_PHYSICAL_TIME_UNIT) -> np.ndarray:
+    """Shared, log-spaced physical lags that fit at least one absolute window."""
+    lags: set[int] = set()
+    for start, end in zip(boundaries[:-1], boundaries[1:]):
+        maximum = int(end - start - time_unit)
+        if maximum < time_unit:
+            continue
+        for candidate in log_spaced_lags(maximum, lag_points):
+            lag = int(math.ceil(candidate / time_unit) * time_unit)
+            if time_unit <= lag <= maximum:
+                lags.add(lag)
+    if not lags:
+        raise ValueError("No valid absolute-time lags for the selected rollout budget.")
+    return np.asarray(sorted(lags), dtype=np.int64)
+
+
 def per_puzzle_hrm(
-    model: torch.nn.Module, run: RunDirectory, x: torch.Tensor, max_l_updates: int, lag_points: int, progress: tqdm[Any],
+    model: torch.nn.Module, run: RunDirectory, x: torch.Tensor, physical_boundaries: np.ndarray,
+    physical_lags: np.ndarray, progress: tqdm[Any],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     assert run.l_cycles is not None
-    blocks, native_l = max_l_updates // run.l_cycles, run.l_cycles
-    boundaries = segment_boundaries(blocks)
-    lags = np.asarray(segment_lags(boundaries, lag_points), dtype=np.int64)
-    values = np.full((x.shape[0], len(STATE_NAMES), 4, len(lags)), np.nan, dtype=np.float32)
-    origins = np.zeros((4, len(lags)), dtype=np.int32)
+    native_l = run.l_cycles
+    if np.any(physical_boundaries % native_l) or np.any(physical_lags % native_l):
+        raise ValueError(f"Physical time grid is not divisible by H2L{native_l}.")
+    blocks = int(physical_boundaries[-1] // native_l)
+    lag_blocks = physical_lags // native_l
+    values = np.full((x.shape[0], len(STATE_NAMES), 4, len(physical_lags)), np.nan, dtype=np.float32)
+    origins = np.zeros((4, len(physical_lags)), dtype=np.int32)
     original_h = model.H_cycles  # type: ignore[attr-defined]
     model.H_cycles, model.L_cycles = 1, native_l  # type: ignore[attr-defined]
     try:
-        for lag_index, lag in enumerate(lags.tolist()):
+        for lag_index, lag in enumerate(lag_blocks.tolist()):
             ref_carry: Carry = model.initial_carry  # type: ignore[attr-defined]
             lead_carry: Carry = model.initial_carry  # type: ignore[attr-defined]
             ref_state, lead_state = _initial_hrm(model, ref_carry, x), _initial_hrm(model, lead_carry, x)
@@ -251,7 +299,7 @@ def per_puzzle_hrm(
             totals = {segment: {state: torch.zeros(x.shape[0], device=x.device) for state in STATE_NAMES} for segment in range(4)}
             counts = np.zeros(4, dtype=np.int32)
             for t in range(blocks - lag + 1):
-                segment = segment_for_pair(t, lag, boundaries)
+                segment = segment_for_pair(t * native_l, lag * native_l, tuple(physical_boundaries.tolist()))
                 if segment is not None:
                     for state, step_values in state_msd_per_puzzle(*ref_state, *lead_state).items():
                         totals[segment][state] += step_values
@@ -276,20 +324,19 @@ def per_puzzle_hrm(
             progress.update(1)
     finally:
         model.H_cycles = original_h  # type: ignore[attr-defined]
-    return values, lags, np.asarray(boundaries, dtype=np.int64), origins
+    return values, lag_blocks, physical_boundaries, origins
 
 
 def per_puzzle_rt(
-    model: torch.nn.Module, x: torch.Tensor, max_updates: int, lag_points: int, progress: tqdm[Any],
+    model: torch.nn.Module, x: torch.Tensor, physical_boundaries: np.ndarray, physical_lags: np.ndarray, progress: tqdm[Any],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    boundaries = segment_boundaries(max_updates)
-    lags = np.asarray(segment_lags(boundaries, lag_points), dtype=np.int64)
-    values = np.full((x.shape[0], 1, 4, len(lags)), np.nan, dtype=np.float32)
-    origins = np.zeros((4, len(lags)), dtype=np.int32)
+    max_updates = int(physical_boundaries[-1])
+    values = np.full((x.shape[0], 1, 4, len(physical_lags)), np.nan, dtype=np.float32)
+    origins = np.zeros((4, len(physical_lags)), dtype=np.int32)
     original_cycles = model.cycles  # type: ignore[attr-defined]
     model.cycles = 1  # type: ignore[attr-defined]
     try:
-        for lag_index, lag in enumerate(lags.tolist()):
+        for lag_index, lag in enumerate(physical_lags.tolist()):
             ref_carry: Carry = model.initial_carry  # type: ignore[attr-defined]
             lead_carry: Carry = model.initial_carry  # type: ignore[attr-defined]
             initial = ref_carry["z"].reshape(1, 1, -1).expand(x.shape[0], x.shape[1], -1)
@@ -299,7 +346,7 @@ def per_puzzle_rt(
             totals = {segment: torch.zeros(x.shape[0], device=x.device) for segment in range(4)}
             counts = np.zeros(4, dtype=np.int32)
             for t in range(max_updates - lag + 1):
-                segment = segment_for_pair(t, lag, boundaries)
+                segment = segment_for_pair(t, lag, tuple(physical_boundaries.tolist()))
                 if segment is not None:
                     totals[segment] += rt_state_msd_per_puzzle(ref_state, lead_state)
                     counts[segment] += 1
@@ -313,7 +360,7 @@ def per_puzzle_rt(
             progress.update(1)
     finally:
         model.cycles = original_cycles  # type: ignore[attr-defined]
-    return values, lags, np.asarray(boundaries, dtype=np.int64), origins
+    return values, physical_lags, physical_boundaries, origins
 
 
 def atomic_npz(path: Path, **arrays: Any) -> None:
@@ -330,12 +377,19 @@ def run_trajectory(
 ) -> dict[str, object]:
     file_name = f"{run.condition}_seed_{run.seed}.npz"
     output_path = args.output_dir / "per_puzzle_msd" / file_name
+    physical_boundaries = args.absolute_segment_boundaries
+    physical_lags = args.absolute_lags
+    total_blocks = int(physical_boundaries[-1] // (run.l_cycles or 1))
     if output_path.is_file():
         cached = np.load(output_path, allow_pickle=False)
         matches = (
             "checkpoint" in cached.files
             and str(cached["checkpoint"].item()) == str(checkpoint)
             and np.array_equal(cached["sample_stream_indices"], stream_indices)
+            and "analysis_scheme" in cached.files
+            and str(cached["analysis_scheme"].item()) == CORE_ANALYSIS_SCHEME
+            and np.array_equal(cached["segment_boundaries_l_updates"], physical_boundaries)
+            and np.array_equal(cached["lag_l_updates"], physical_lags)
         )
         if matches:
             boundaries, lags = cached["segment_boundaries_blocks"], cached["lag_blocks"]
@@ -343,8 +397,10 @@ def run_trajectory(
                 "kind": run.kind, "condition": run.condition, "readout": run.readout, "train_l": "" if run.l_cycles is None else run.l_cycles,
                 "seed": run.seed, "best_epoch": best_epoch, "checkpoint": str(checkpoint), "samples": len(stream_indices),
                 "sample_seed": args.sample_seed, "sample_manifest_sha256": manifest_sha256,
-                "requested_l_updates": args.max_l_updates, "actual_l_updates": int(boundaries[-1]) * (run.l_cycles or 1),
-                "total_blocks": int(boundaries[-1]), "segment_boundaries_blocks": json.dumps(boundaries.tolist()),
+                "requested_l_updates": args.max_l_updates, "actual_l_updates": int(physical_boundaries[-1]),
+                "total_blocks": total_blocks, "segment_clock": "absolute_l_updates",
+                "segment_boundaries_blocks": json.dumps(boundaries.tolist()),
+                "segment_boundaries_l_updates": json.dumps(physical_boundaries.tolist()),
                 "lag_blocks": json.dumps(lags.tolist()), "state_shape": f"{len(stream_indices)}x82x512", "per_puzzle_file": str(output_path),
             }
     model = build_model(run, checkpoint, metadata, args.device)
@@ -353,9 +409,13 @@ def run_trajectory(
     for start in range(0, fixed_x.shape[0], args.rollout_batch_size):
         x = fixed_x[start:start + args.rollout_batch_size].to(args.device, non_blocking=True)
         if run.kind == "hrm":
-            values, current_lags, current_boundaries, current_origins = per_puzzle_hrm(model, run, x, args.max_l_updates, args.lag_points, progress)
+            values, current_lags, current_boundaries, current_origins = per_puzzle_hrm(
+                model, run, x, physical_boundaries, physical_lags, progress,
+            )
         else:
-            values, current_lags, current_boundaries, current_origins = per_puzzle_rt(model, x, args.max_l_updates, args.lag_points, progress)
+            values, current_lags, current_boundaries, current_origins = per_puzzle_rt(
+                model, x, physical_boundaries, physical_lags, progress,
+            )
         batches.append(values)
         if lags is None:
             lags, boundaries, origins = current_lags, current_boundaries, current_origins
@@ -373,9 +433,10 @@ def run_trajectory(
                 f"[H,L] identity failed for {run.condition}/seed_{run.seed}: "
                 f"absolute={error:.3e}"
             )
-    actual_updates = int(boundaries[-1]) * (run.l_cycles or 1)
+    actual_updates = int(physical_boundaries[-1])
     atomic_npz(output_path, msd=all_values, state_names=states, lag_blocks=lags,
-               lag_l_updates=lags * (run.l_cycles or 1), segment_boundaries_blocks=boundaries,
+               lag_l_updates=physical_lags, segment_boundaries_blocks=boundaries,
+               segment_boundaries_l_updates=physical_boundaries, analysis_scheme=np.asarray(CORE_ANALYSIS_SCHEME),
                origins=origins, sample_stream_indices=stream_indices, checkpoint=np.asarray(str(checkpoint)))
     del model
     gc.collect()
@@ -385,8 +446,9 @@ def run_trajectory(
         "kind": run.kind, "condition": run.condition, "readout": run.readout, "train_l": "" if run.l_cycles is None else run.l_cycles,
         "seed": run.seed, "best_epoch": best_epoch, "checkpoint": str(checkpoint), "samples": len(stream_indices),
         "sample_seed": args.sample_seed, "sample_manifest_sha256": manifest_sha256,
-        "requested_l_updates": args.max_l_updates, "actual_l_updates": actual_updates, "total_blocks": int(boundaries[-1]),
-        "segment_boundaries_blocks": json.dumps(boundaries.tolist()), "lag_blocks": json.dumps(lags.tolist()),
+        "requested_l_updates": args.max_l_updates, "actual_l_updates": actual_updates, "total_blocks": total_blocks,
+        "segment_clock": "absolute_l_updates", "segment_boundaries_blocks": json.dumps(boundaries.tolist()),
+        "segment_boundaries_l_updates": json.dumps(physical_boundaries.tolist()), "lag_blocks": json.dumps(lags.tolist()),
         "state_shape": f"{len(stream_indices)}x82x512", "per_puzzle_file": str(output_path),
     }
 
@@ -532,6 +594,8 @@ def plot_comparison(output_dir: Path, metadata: list[dict[str, str]], conditions
         axes = np.asarray([axes])
     colors = plt.get_cmap("tab10")
     rng = np.random.default_rng(seed)
+    prototype = np.load(next(meta["per_puzzle_file"] for meta in metadata if meta["condition"] == conditions[0]), allow_pickle=False)
+    physical_boundaries = prototype["segment_boundaries_l_updates"]
     for row, state in enumerate(states):
         for segment in range(4):
             axis = axes[row, segment]
@@ -543,10 +607,10 @@ def plot_comparison(output_dir: Path, metadata: list[dict[str, str]], conditions
                 axis.plot(lags, mean, color=color, linewidth=2, label=condition)
                 axis.fill_between(lags, low, high, color=color, alpha=.16)
             axis.set_xscale("log", base=2); axis.set_yscale("log", base=2)
-            axis.set_title(f"{state}, segment {segment + 1}")
+            axis.set_title(f"{state}, L updates {physical_boundaries[segment]}–{physical_boundaries[segment + 1]}")
             axis.grid(True, which="both", alpha=.2)
             if row == len(states) - 1:
-                axis.set_xlabel("Lag (underlying updates, log₂)")
+                axis.set_xlabel("Lag (underlying L updates, log₂)")
             if segment == 0:
                 axis.set_ylabel("Per-coordinate MSD")
             if row == 0 and segment == 3:
@@ -562,6 +626,16 @@ def create_figures(output_dir: Path, metadata: list[dict[str, str]], repeats: in
     plot_comparison(output_dir, metadata, ("H2L1_h", "H2L6_h"), ("h", "l"), "compare_l_refinement", "L refinement depth: H2L1-H vs H2L6-H", repeats, seed)
     plot_comparison(output_dir, metadata, ("H2L6_h", "H2L6_l", "H2L6_hl"), ("h", "l"), "compare_readout", "Readout supervision at H2L6", repeats, seed + 1)
     plot_comparison(output_dir, metadata, ("H2L1_h", "H2L6_h", "RT"), ("joint_or_rt",), "compare_rt", "RT control vs HRM joint state", repeats, seed + 2)
+    titles = {
+        "H2L1_h": "Absolute-time MSD — H2L1-H",
+        "H2L6_h": "Absolute-time MSD — H2L6-H",
+        "H2L6_l": "Absolute-time MSD — H2L6-L",
+        "H2L6_hl": "Absolute-time MSD — H2L6-HL",
+        "RT": "Absolute-time MSD — RT",
+    }
+    for offset, condition in enumerate(CORE_CONDITIONS):
+        states = ("rt",) if condition == "RT" else ("h", "l", "h_plus_l", "hl_concat")
+        plot_comparison(output_dir, metadata, (condition,), states, f"msd_{condition}", titles[condition], repeats, seed + 10 + offset)
 
 
 def write_readme(output_dir: Path) -> None:
@@ -578,10 +652,13 @@ per_puzzle_msd/*.npz. Each tensor has [puzzle, state, segment, lag] axes and is 
 time-averaged full-state per-coordinate MSD. Bootstrap intervals resample puzzles;
 the cross-seed summary uses a nested cluster bootstrap over training seeds and puzzles.
 
-The four segments remain log-uniform in each model's H-boundary clock. HRM states are
-sampled after each H update, so L is observed at L-block boundaries, not after every
-individual L update. The RT comparison uses HRM [H,L] and the RT state, both normalized
-per coordinate. The figures are descriptive deterministic transport analyses, not
+All conditions use the same absolute underlying-L-update windows: at the default
+4,096-update budget these are [0, 48), [48, 192), [192, 768), and [768, 4092).
+The common lag grid is restricted to multiples of six L updates, so H2L1, H2L6,
+and RT are compared at identical physical lags. HRM states are sampled after each
+H update, so L is observed at L-block boundaries, not after every individual L
+update. The RT comparison uses HRM [H,L] and the RT state, both normalized per
+coordinate. The figures are descriptive deterministic transport analyses, not
 evidence that inference is a stochastic loss-landscape diffusion process.
 """)
 
@@ -630,6 +707,8 @@ def finalize_core(args: Any) -> None:
         "profile": "core-five", "conditions": CORE_CONDITIONS, "seeds": args.core_seeds,
         "samples": args.samples, "sample_seed": args.sample_seed, "bootstrap_replicates": args.bootstrap_replicates,
         "max_l_updates": args.max_l_updates, "lag_points": args.lag_points,
+        "segment_clock": "absolute_l_updates", "analysis_scheme": CORE_ANALYSIS_SCHEME,
+        "physical_time_unit": CORE_PHYSICAL_TIME_UNIT,
     }, indent=2) + "\n")
     write_readme(args.output_dir)
 
@@ -639,6 +718,8 @@ def main_core(args: Any) -> None:
         merge_core(args)
         return
     runs = core_runs(args.checkpoints_root, args.core_seeds)
+    args.absolute_segment_boundaries = absolute_segment_boundaries(args.max_l_updates)
+    args.absolute_lags = absolute_lags(args.absolute_segment_boundaries, args.lag_points)
     if args.shard_index is not None:
         runs = runs[args.shard_index::args.num_shards]
     if not runs:
@@ -651,7 +732,7 @@ def main_core(args: Any) -> None:
     manifest = write_manifest(args.output_dir, indices, args.sample_seed)
     by_key = {(run.condition, run.seed): run for run in runs}
     chunks = math.ceil(args.samples / args.rollout_batch_size)
-    total = sum(len(segment_lags(segment_boundaries(args.max_l_updates // (run.l_cycles or 1)), args.lag_points)) * chunks for run in runs)
+    total = len(args.absolute_lags) * chunks * len(runs)
     progress = tqdm(total=total, desc="Core per-puzzle paired rollouts", unit="lag-batch")
     rollout_rows = []
     for row in best:

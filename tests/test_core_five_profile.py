@@ -12,7 +12,13 @@ coolname.generate_slug = lambda _count: "stub"
 sys.modules.setdefault("coolname", coolname)
 
 from scripts.analyze_long_rollout_msd import RunDirectory
-from scripts.core_five_long_rollout import CORE_CONDITIONS, core_runs, fixed_random_samples
+from scripts.core_five_long_rollout import (
+    CORE_CONDITIONS,
+    absolute_lags,
+    absolute_segment_boundaries,
+    core_runs,
+    fixed_random_samples,
+)
 
 
 def fake_run(condition: str, seed: int) -> RunDirectory:
@@ -51,6 +57,14 @@ class CoreFiveProfileTest(unittest.TestCase):
         second, second_indices = fixed_random_samples(loader, samples=4, seed=9)
         self.assertTrue(torch.equal(first, second))
         self.assertEqual(first_indices.tolist(), second_indices.tolist())
+
+    def test_absolute_physical_time_grid_is_shared_and_divisible(self) -> None:
+        boundaries = absolute_segment_boundaries(4096)
+        lags = absolute_lags(boundaries, lag_points=16)
+        self.assertEqual(boundaries.tolist(), [0, 48, 192, 768, 4092])
+        self.assertTrue((boundaries % 6 == 0).all())
+        self.assertTrue((lags % 6 == 0).all())
+        self.assertTrue((lags >= 6).all())
 
 
 if __name__ == "__main__":
