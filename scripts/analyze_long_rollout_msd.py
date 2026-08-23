@@ -533,10 +533,11 @@ def merge_worker_outputs(input_dirs: list[Path], output_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=("all", "core-five"), default="all", help="all preserves the original sweep; core-five runs the statistical five-condition analysis.")
     parser.add_argument("--checkpoints-root", type=Path, default=Path("checkpoints/h2_l_readout_sweep"))
-    parser.add_argument("--output-dir", type=Path, default=Path("results/long_rollout_dynamics"))
+    parser.add_argument("--output-dir", type=Path, help="Output directory (profile default is used when omitted).")
     parser.add_argument("--rt-checkpoint-dir", type=Path, help="Optional additional RT seed_N directory; RT/seed_* under --checkpoints-root is discovered automatically.")
-    parser.add_argument("--samples", type=int, default=64, help="Fixed test_hard puzzles used for each rollout.")
+    parser.add_argument("--samples", type=int, help="Fixed test_hard puzzles used for each rollout (profile default when omitted).")
     parser.add_argument("--max-l-updates", type=int, default=4096, help="Requested underlying L/recurrent updates.")
     parser.add_argument("--lag-points", type=int, default=16, help="Log₂-spaced lag points per time segment.")
     parser.add_argument("--device", default="cuda", help="Torch device for evaluation and rollout.")
@@ -544,7 +545,36 @@ def main() -> None:
     parser.add_argument("--shard-index", type=int, help="Zero-based condition/seed shard index for one GPU worker.")
     parser.add_argument("--num-shards", type=int, default=1, help="Total independent GPU worker shards.")
     parser.add_argument("--merge-from", type=Path, nargs="+", metavar="WORKER_DIR", help="Merge worker outputs and draw final figures without model evaluation.")
+    parser.add_argument("--core-seeds", default="1,2,3", help="Required seed list for --profile core-five.")
+    parser.add_argument("--sample-seed", type=int, default=20260823, help="Fixed random test_hard sample seed for --profile core-five.")
+    parser.add_argument("--bootstrap-replicates", type=int, default=1000, help="Puzzle/cluster bootstrap repetitions for --profile core-five.")
+    parser.add_argument("--rollout-batch-size", type=int, default=64, help="Puzzle batch size during core-five rollout collection.")
     args = parser.parse_args()
+    if args.profile == "core-five":
+        from scripts.core_five_long_rollout import main_core, parse_seeds
+        args.output_dir = args.output_dir or Path("results/core_five_long_rollout")
+        args.samples = 256 if args.samples is None else args.samples
+        try:
+            args.core_seeds = parse_seeds(args.core_seeds)
+        except ValueError as error:
+            parser.error(str(error))
+        if args.samples < 1 or args.max_l_updates < 4 or args.lag_points < 1 or args.rollout_batch_size < 1:
+            parser.error("--samples, --max-l-updates, --lag-points, and --rollout-batch-size must be positive (max updates >= 4).")
+        if args.bootstrap_replicates < 10:
+            parser.error("--bootstrap-replicates must be at least 10.")
+        if args.num_shards < 1:
+            parser.error("--num-shards must be positive.")
+        if args.shard_index is None and args.num_shards != 1:
+            parser.error("--num-shards requires --shard-index.")
+        if args.shard_index is not None and not 0 <= args.shard_index < args.num_shards:
+            parser.error(f"--shard-index must be in [0, {args.num_shards - 1}].")
+        args.device = torch.device(args.device)
+        if not args.merge_from and args.device.type == "cuda" and not torch.cuda.is_available():
+            parser.error("CUDA is unavailable; pass --device cpu only for a very small smoke test.")
+        main_core(args)
+        return
+    args.output_dir = args.output_dir or Path("results/long_rollout_dynamics")
+    args.samples = 64 if args.samples is None else args.samples
     if args.samples < 1 or args.max_l_updates < 4 or args.lag_points < 1:
         parser.error("--samples, --max-l-updates, and --lag-points must be positive (max updates >= 4).")
     if args.num_shards < 1:

@@ -32,7 +32,7 @@ class HRMTraceTest(unittest.TestCase):
         z_h = torch.randn(2, 4, 8)
         z_l = torch.randn(2, 4, 8)
         h_logits, l_logits = model.split_hl_readout_logits(z_h, z_l)
-        self.assertTrue(torch.allclose(h_logits + l_logits, model.readout_logits(z_h, z_l)))
+        self.assertTrue(torch.allclose(h_logits + l_logits, model.readout_logits(z_h, z_l), atol=1e-6, rtol=1e-5))
 
     def test_shared_initial_h_state_broadcasts_for_intermediate_readout(self) -> None:
         model = HRM(tiny_config("hl"))

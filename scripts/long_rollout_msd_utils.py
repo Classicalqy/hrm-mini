@@ -57,8 +57,48 @@ def state_msd(z_h_a: torch.Tensor, z_l_a: torch.Tensor, z_h_b: torch.Tensor, z_l
     return {"h": h, "l": l, "h_plus_l": h_plus_l, "hl_concat": hl_concat}
 
 
+def state_msd_per_puzzle(
+    z_h_a: torch.Tensor, z_l_a: torch.Tensor, z_h_b: torch.Tensor, z_l_b: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    """Return exact full-state per-coordinate MSD for every puzzle in a batch.
+
+    The return tensors have shape ``[batch]``.  Token and hidden dimensions are
+    averaged, but the puzzle dimension is intentionally retained for bootstrap
+    inference over input instances.
+    """
+    delta_h = (z_h_b - z_h_a).float()
+    delta_l = (z_l_b - z_l_a).float()
+    h = torch.mean(torch.square(delta_h), dim=(-2, -1))
+    l = torch.mean(torch.square(delta_l), dim=(-2, -1))
+    h_plus_l = torch.mean(torch.square(delta_h + delta_l), dim=(-2, -1))
+    hl_concat = (torch.sum(torch.square(delta_h), dim=(-2, -1)) + torch.sum(torch.square(delta_l), dim=(-2, -1)))
+    hl_concat = hl_concat / (delta_h.shape[-2] * (delta_h.shape[-1] + delta_l.shape[-1]))
+    return {"h": h, "l": l, "h_plus_l": h_plus_l, "hl_concat": hl_concat}
+
+
 def rt_state_msd(z_a: torch.Tensor, z_b: torch.Tensor) -> float:
     return torch.mean(torch.square((z_b - z_a).float())).item()
+
+
+def rt_state_msd_per_puzzle(z_a: torch.Tensor, z_b: torch.Tensor) -> torch.Tensor:
+    """Per-puzzle counterpart of :func:`rt_state_msd`."""
+    return torch.mean(torch.square((z_b - z_a).float()), dim=(-2, -1))
+
+
+def local_log_slope(values: np.ndarray, lags: np.ndarray) -> np.ndarray:
+    """Central finite-difference d(log MSD)/d(log lag) along the last axis."""
+    if values.shape[-1] != len(lags):
+        raise ValueError("The last values dimension must equal the number of lags.")
+    if len(lags) < 2:
+        return np.full_like(values, np.nan, dtype=np.float64)
+    log_values = np.log(values)
+    log_lags = np.log(lags.astype(np.float64))
+    result = np.empty_like(log_values, dtype=np.float64)
+    result[..., 0] = (log_values[..., 1] - log_values[..., 0]) / (log_lags[1] - log_lags[0])
+    result[..., -1] = (log_values[..., -1] - log_values[..., -2]) / (log_lags[-1] - log_lags[-2])
+    if len(lags) > 2:
+        result[..., 1:-1] = (log_values[..., 2:] - log_values[..., :-2]) / (log_lags[2:] - log_lags[:-2])
+    return result
 
 
 def segment_for_pair(t: int, lag: int, boundaries: tuple[int, int, int, int, int]) -> int | None:

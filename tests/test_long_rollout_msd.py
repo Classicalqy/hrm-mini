@@ -26,6 +26,21 @@ class LongRolloutMSDTest(unittest.TestCase):
         msd = MODULE.state_msd(h_a, l_a, h_b, l_b)
         self.assertAlmostEqual(msd["hl_concat"], (msd["h"] + msd["l"]) / 2, places=6)
 
+    def test_per_puzzle_msd_averages_to_batch_msd(self) -> None:
+        torch.manual_seed(4)
+        h_a, h_b = torch.randn(3, 4, 8), torch.randn(3, 4, 8)
+        l_a, l_b = torch.randn(3, 4, 8), torch.randn(3, 4, 8)
+        aggregate = MODULE.state_msd(h_a, l_a, h_b, l_b)
+        per_puzzle = MODULE.state_msd_per_puzzle(h_a, l_a, h_b, l_b)
+        for state, expected in aggregate.items():
+            self.assertAlmostEqual(per_puzzle[state].mean().item(), expected, places=6)
+
+    def test_local_log_slope_recovers_power_law(self) -> None:
+        lags = torch.tensor([1, 2, 4, 8], dtype=torch.float64).numpy()
+        values = torch.tensor([[1, 4, 16, 64], [2, 8, 32, 128]], dtype=torch.float64).numpy()
+        slope = MODULE.local_log_slope(values, lags)
+        self.assertTrue(((slope - 2.0) < 1e-10).all())
+
     def test_lags_are_positive_and_fit_their_segments(self) -> None:
         boundaries = MODULE.segment_boundaries(128)
         lags = MODULE.segment_lags(boundaries, points=16)
