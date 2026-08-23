@@ -357,9 +357,18 @@ def run_trajectory(
     states = np.asarray(("rt",) if run.kind == "rt" else STATE_NAMES)
     if run.kind == "hrm":
         h, l, cat = all_values[:, 0], all_values[:, 1], all_values[:, 3]
-        error = np.nanmax(np.abs(cat - (h + l) / 2))
-        if error > 1e-5:
-            raise RuntimeError(f"[H,L] identity failed for {run.condition}/seed_{run.seed}: {error:.3e}")
+        target = (h + l) / 2
+        # H, L, and [H,L] use algebraically identical per-coordinate MSDs, but
+        # their CUDA reductions and float32 time-origin accumulations follow
+        # different summation orders.  Validate the identity with a scale-aware
+        # tolerance rather than a fixed absolute threshold.
+        if not np.allclose(cat, target, rtol=1e-5, atol=1e-6, equal_nan=True):
+            error = np.nanmax(np.abs(cat - target))
+            relative_error = np.nanmax(np.abs(cat - target) / np.maximum(np.abs(target), 1e-12))
+            raise RuntimeError(
+                f"[H,L] identity failed for {run.condition}/seed_{run.seed}: "
+                f"absolute={error:.3e}, relative={relative_error:.3e}"
+            )
     actual_updates = int(boundaries[-1]) * (run.l_cycles or 1)
     atomic_npz(output_path, msd=all_values, state_names=states, lag_blocks=lags,
                lag_l_updates=lags * (run.l_cycles or 1), segment_boundaries_blocks=boundaries,
