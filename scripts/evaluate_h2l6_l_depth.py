@@ -35,7 +35,7 @@ from scripts.analyze_long_rollout_msd import RunDirectory, build_model, data_kwa
 
 CONDITIONS = ("H2L6_h", "H2L6_l", "H2L6_hl")
 READOUT_BY_CONDITION = {"H2L6_h": "h", "H2L6_l": "l", "H2L6_hl": "hl"}
-DEFAULT_L_VALUES = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32)
+DEFAULT_L_VALUES = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64, 128, 256, 512)
 FIELDS = [
     "condition", "readout", "seed", "checkpoint", "best_epoch", "eval_l",
     "test_exact_match", "cell_accuracy", "examples",
@@ -193,6 +193,9 @@ evaluated on unaugmented `test_hard` at inference L values `{','.join(map(str, l
 H remains fixed at 2 and `cycles_per_data=16` remains native. `l_depth_per_seed.csv`
 contains all raw checkpoint results; `l_depth_seed_summary.csv` is the training-seed
 mean and SD, not a puzzle bootstrap confidence interval.
+
+The default range reaches L=512. Existing `l_depth_per_seed.csv` rows are reused, so
+rerunning the evaluator only computes newly requested L values.
 """)
 
 
