@@ -15,8 +15,10 @@ from scripts.core_five_l_depth_long_rollout import (
     DEFAULT_EVAL_L_VALUES,
     PHYSICAL_BOUNDARIES,
     advance_hrm_l,
+    cluster_bounds,
     expected_h_updates,
     initial_hrm_state,
+    ratio_curve,
     rollout_spec,
     units_from_runs,
 )
@@ -57,6 +59,21 @@ class CoreFiveLDepthProfileTest(unittest.TestCase):
         updates, boundaries, _ = rollout_spec(type("Unit", (), {"run": run, "eval_l": 6})(), args)
         self.assertEqual(updates, 4096)
         self.assertEqual(boundaries.tolist(), [0, 1020, 2040, 3060, 4096])
+
+    def test_one_indexed_csv_segments_match_zero_indexed_plot_segments(self) -> None:
+        cluster_rows = [
+            {"condition": "H2L6_h", "eval_l": "6", "state": "h", "segment": "1", "lag_l_updates": "1",
+             "cluster_ci95_low": "0.1", "cluster_ci95_high": "0.2"},
+        ]
+        low, high = cluster_bounds(cluster_rows, "H2L6_h", 6, "h", 0, torch.tensor([1.]).numpy())
+        self.assertEqual(low.tolist(), [.1])
+        self.assertEqual(high.tolist(), [.2])
+        ratio_rows = [
+            {"condition": "H2L6_h", "eval_l": "6", "seed": "1", "segment": "1", "lag_l_updates": "1", "h_over_l": "2", "status": "defined"},
+            {"condition": "H2L6_h", "eval_l": "6", "seed": "2", "segment": "1", "lag_l_updates": "1", "h_over_l": "4", "status": "defined"},
+        ]
+        _lags, mean, _low, _high = ratio_curve(ratio_rows, "H2L6_h", 6, 0)
+        self.assertEqual(mean.tolist(), [3.])
 
     def test_six_step_manual_block_matches_native_hrm_forward(self) -> None:
         torch.manual_seed(3)

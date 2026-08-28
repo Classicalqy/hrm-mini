@@ -395,7 +395,7 @@ def cluster_bounds(rows: list[dict[str, str]], condition: str, eval_l: int, stat
                    lags: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     selected = sorted(
         (row for row in rows if row["condition"] == condition and int(row["eval_l"]) == eval_l
-         and row["state"] == state and int(row["segment"]) == segment),
+         and row["state"] == state and int(row["segment"]) == segment + 1),
         key=lambda row: int(row["lag_l_updates"]),
     )
     selected_lags = np.asarray([float(row["lag_l_updates"]) for row in selected])
@@ -552,7 +552,7 @@ def ratio_rows(metadata: list[dict[str, str]]) -> list[dict[str, object]]:
 def ratio_curve(rows: list[dict[str, str]], condition: str, eval_l: int, segment: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     selected = sorted(
         (row for row in rows if row["condition"] == condition and int(row["eval_l"]) == eval_l
-         and int(row["segment"]) == segment and row["status"] != "zero L MSD"),
+         and int(row["segment"]) == segment + 1 and row["status"] != "zero L MSD"),
         key=lambda row: (int(row["seed"]), int(row["lag_l_updates"])),
     )
     by_seed: dict[int, list[dict[str, str]]] = {}
