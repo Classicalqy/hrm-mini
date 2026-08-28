@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+import filecmp
 import gc
 import hashlib
 import json
@@ -663,7 +664,10 @@ def merge(args: Any) -> None:
             selections[(row["condition"], int(row["seed"]))] = row
         for source in (Path(worker) / "per_puzzle_msd").glob("*.npz"):
             target = args.output_dir / "per_puzzle_msd" / source.name
-            if target.exists(): raise ValueError(f"Duplicate per-puzzle result: {target.name}")
+            if target.exists():
+                if not filecmp.cmp(source, target, shallow=False):
+                    raise ValueError(f"Conflicting per-puzzle result: {target.name}")
+                continue  # Resume a merge interrupted after this file was copied.
             target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source, target)
     expected = {unit.key for unit in args.all_units}
     actual = {(row["condition"], int(row["seed"]), int(row["eval_l"])) for row in metadata}
