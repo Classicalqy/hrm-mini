@@ -533,7 +533,7 @@ def merge_worker_outputs(input_dirs: list[Path], output_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("all", "core-five", "core-five-l-depth", "core-five-l-depth-min-outer16"), default="all", help="all preserves the original sweep; core-five runs the statistical five-condition analysis; core-five-l-depth is fixed-compute; core-five-l-depth-min-outer16 guarantees 16 ordinary H=2 outer calls.")
+    parser.add_argument("--profile", choices=("all", "core-five", "core-five-l-depth", "core-five-l-depth-min-outer16", "core-h-l-clock"), default="all", help="all preserves the original sweep; core-five runs the statistical five-condition analysis; core-five-l-depth is fixed-compute; core-five-l-depth-min-outer16 guarantees 16 ordinary H=2 outer calls; core-h-l-clock analyses 160 H updates for five selected conditions.")
     parser.add_argument("--checkpoints-root", type=Path, default=Path("checkpoints/h2_l_readout_sweep"))
     parser.add_argument("--output-dir", type=Path, help="Output directory (profile default is used when omitted).")
     parser.add_argument("--rt-checkpoint-dir", type=Path, help="Optional additional RT seed_N directory; RT/seed_* under --checkpoints-root is discovered automatically.")
@@ -552,12 +552,13 @@ def main() -> None:
     parser.add_argument("--l-depth-values", default="6,8,16,32,64,128,256,512,1024", help="Comma-separated H2L6 inference L values for --profile core-five-l-depth.")
     parser.add_argument("--reference-best-checkpoints", type=Path, default=Path("results/core_five_long_rollout/final_absolute/best_checkpoints.csv"), help="Native-L6 selected checkpoints reused by --profile core-five-l-depth.")
     args = parser.parse_args()
-    if args.profile in ("core-five", "core-five-l-depth", "core-five-l-depth-min-outer16"):
+    if args.profile in ("core-five", "core-five-l-depth", "core-five-l-depth-min-outer16", "core-h-l-clock"):
         from scripts.core_five_long_rollout import main_core, parse_seeds
         output_defaults = {
             "core-five": "results/core_five_long_rollout",
             "core-five-l-depth": "results/core_five_l_depth_long_rollout",
             "core-five-l-depth-min-outer16": "results/core_five_l_depth_min_outer16_long_rollout",
+            "core-h-l-clock": "results/core_h_l_clock_dynamics",
         }
         args.output_dir = args.output_dir or Path(output_defaults[args.profile])
         args.samples = 256 if args.samples is None else args.samples
@@ -578,6 +579,12 @@ def main() -> None:
         args.device = torch.device(args.device)
         if not args.merge_from and args.device.type == "cuda" and not torch.cuda.is_available():
             parser.error("CUDA is unavailable; pass --device cpu only for a very small smoke test.")
+        if args.profile == "core-h-l-clock":
+            if not args.reference_best_checkpoints.is_absolute():
+                args.reference_best_checkpoints = PROJECT_ROOT / args.reference_best_checkpoints
+            from scripts.core_h_l_clock_dynamics import main_h_l_clock
+            main_h_l_clock(args)
+            return
         if args.profile in ("core-five-l-depth", "core-five-l-depth-min-outer16"):
             if args.max_l_updates != 4096:
                 parser.error("The L-depth profiles use 4096 as the fixed-compute floor; do not override --max-l-updates.")
