@@ -11,6 +11,7 @@ sys.modules.setdefault("coolname", coolname)
 from arch.hrm import HRM
 from scripts.analyze_long_rollout_msd import RunDirectory
 from scripts.core_h_l_clock_dynamics import CORE_KEYS, H_BOUNDARIES, H_LAGS, TOTAL_H_UPDATES, Unit, advance_block, units
+from scripts.core_h_l_clock_dynamics import _pair_hrm
 from scripts.core_five_l_depth_long_rollout import initial_hrm_state
 from test_hrm_readout import tiny_config
 
@@ -43,6 +44,15 @@ class CoreHLClockTest(unittest.TestCase):
         self.assertTrue(torch.equal(state[0], native["z_H"]))
         self.assertTrue(torch.equal(state[1], native["z_L"]))
         self.assertTrue(torch.equal(manual_logits, logits))
+
+    def test_h_clock_collector_uses_batch_by_state_layout(self) -> None:
+        model = HRM(tiny_config("h", h_cycles=1, l_cycles=1))
+        x = torch.randint(0, 11, (2, 4))
+        class Progress:
+            def update(self, _count: int) -> None: pass
+        values, origins = _pair_hrm(model, x, 1, torch.tensor([1]).numpy(), H_BOUNDARIES, clock="h", progress=Progress())
+        self.assertEqual(values.shape, (2, 2, 4, 1))
+        self.assertTrue((origins > 0).all())
 
 
 if __name__ == "__main__":

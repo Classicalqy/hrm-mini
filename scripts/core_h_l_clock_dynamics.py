@@ -126,7 +126,7 @@ def _pair_hrm(model: torch.nn.Module, x: torch.Tensor, eval_l: int, lags: np.nda
         for s in range(4):
             if counts[s]:
                 origins[s, p] = counts[s]
-                values[:, :, s, p] = torch.stack(totals[s]).div(counts[s]).cpu().numpy()
+                values[:, :, s, p] = torch.stack(totals[s]).transpose(0, 1).div(counts[s]).cpu().numpy()
         progress.update(1)
     return values, origins
 
