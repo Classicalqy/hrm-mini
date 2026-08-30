@@ -99,33 +99,54 @@ python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extrem
 
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_hrm
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_rt
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_trm
 
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_hrm
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_rt
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name medium_to_hard_trm
 
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name hard_to_hard_hrm
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name hard_to_hard_rt
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name hard_to_hard_trm
 ```
 
 The Easy configurations use `0 <= rating <= 15`; Medium uses `16 <= rating <= 30`; Hard uses `rating > 50`. Ratings `31–50` are intentionally excluded from these three experimental groups. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
 
+`*_trm` uses the core Tiny Recursive Model structure: one shared two-layer Transformer alternately updates `z_L` and `z_H`. It intentionally excludes the official repository's puzzle-id embeddings and ACT/Q-learning halting so that it has the same input, loss, optimizer, training loop, and test protocol as HRM and RT. Its parameter count is therefore lower by design and must be reported alongside accuracy and recursive-call budget.
+
 ### Cross-evaluate Easy / Medium / Hard
 
-`cross_evaluate.py` evaluates each of the three trained checkpoints on all
-three rating bands of `test_hard`, and writes a 3×3 accuracy matrix plus a CSV,
-JSON, and per-cell correctness files. Use matching checkpoints from one seed:
+`cross_evaluate.py` evaluates the final checkpoint of every HRM, RT, and TRM
+run on all three rating bands of the held-out official `test` split. It requires
+a complete, balanced model × train-band × seed matrix; it writes per-run CSV/
+JSON, seed mean±sample-standard-deviation aggregates, per-model 3×3 matrices,
+and per-cell correctness files. Use the same seeds for all nine model/training
+conditions. The examples below show seed 1; repeat every line for seeds 2 and
+3.
 
 ```bash
 python cross_evaluate.py \
-  --checkpoint easy=checkpoints/<easy-run>/seed_1/epoch_19.pt \
-  --checkpoint medium=checkpoints/<medium-run>/seed_1/epoch_19.pt \
-  --checkpoint hard=checkpoints/<hard-run>/seed_1/epoch_19.pt
+  --checkpoint hrm:easy:1=checkpoints/<easy-hrm-run>/seed_1/epoch_19.pt \
+  --checkpoint hrm:medium:1=checkpoints/<medium-hrm-run>/seed_1/epoch_19.pt \
+  --checkpoint hrm:hard:1=checkpoints/<hard-hrm-run>/seed_1/epoch_19.pt \
+  --checkpoint rt:easy:1=checkpoints/<easy-rt-run>/seed_1/epoch_19.pt \
+  --checkpoint rt:medium:1=checkpoints/<medium-rt-run>/seed_1/epoch_19.pt \
+  --checkpoint rt:hard:1=checkpoints/<hard-rt-run>/seed_1/epoch_19.pt \
+  --checkpoint trm:easy:1=checkpoints/<easy-trm-run>/seed_1/epoch_19.pt \
+  --checkpoint trm:medium:1=checkpoints/<medium-trm-run>/seed_1/epoch_19.pt \
+  --checkpoint trm:hard:1=checkpoints/<hard-trm-run>/seed_1/epoch_19.pt
 ```
 
+Repeat the nine `--checkpoint` entries for seed 2 and seed 3.
+
 The rating bands are `easy: 0–15`, `medium: 16–30`, and `hard: >=51`, matching
-the training configs. Results default to `results/cross_evaluation/` and use
-the checkpoint's held-out `sudoku-extreme/test` data by default. The script
-stops with a clear error rather than reporting an empty test cell.
+the training configs. Each cell uses the same fixed 10,000 test puzzles
+(`eval_seed=42`). Primary generalization results always use `epoch_19.pt`, the
+checkpoint after the configured 20th epoch; do not select a checkpoint by its
+hard-test curve. Per-epoch Easy/Medium/Hard metrics remain useful for plotting
+training dynamics only. Results default to `results/cross_evaluation/`; the
+script stops with a clear error if checkpoint architectures, final epochs,
+seeds, or evaluation datasets do not form a comparable matrix.
 
 ## Dynamics and Visualization
 

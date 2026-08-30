@@ -18,6 +18,8 @@ def evaluate_checkpoint(
     eval_rating_min: int | None = None,
     eval_rating_max: int | None = None,
     eval_dataset_name: str | None = None,
+    eval_num_base_puzzles: int | None = None,
+    eval_seed: int | None = None,
     output: str | None = None,
     save_samples: bool = False,
 ) -> dict[str, float | int]:
@@ -40,6 +42,10 @@ def evaluate_checkpoint(
         data_kwargs["eval_rating_max"] = eval_rating_max
     if eval_dataset_name is not None:
         data_kwargs["eval_dataset_name"] = eval_dataset_name
+    if eval_num_base_puzzles is not None:
+        data_kwargs["eval_num_base_puzzles"] = eval_num_base_puzzles
+    if eval_seed is not None:
+        data_kwargs["eval_seed"] = eval_seed
 
     # Do not silently discard a final partial batch during standalone eval.
     eval_loader, metadata = create_dataloader(
@@ -108,6 +114,8 @@ def evaluate():
     parser.add_argument("--eval-rating-min", type=int, help="Optional inclusive lower Sudoku rating bound for evaluation")
     parser.add_argument("--eval-rating-max", type=int, help="Optional inclusive upper Sudoku rating bound for evaluation")
     parser.add_argument("--eval-dataset-name", help="Optional dataset path/name to use instead of the checkpoint's eval_dataset_name")
+    parser.add_argument("--eval-num-base-puzzles", type=int, help="Optional deterministic evaluation sample size")
+    parser.add_argument("--eval-seed", type=int, help="Optional deterministic evaluation sample seed")
     parser.add_argument("--output", type=str, help="Optional .npz output path (default: checkpoint-dir/eval_result.npz)")
     parser.add_argument("--save-samples", action="store_true", help="Include input samples in the optional .npz output")
     args = parser.parse_args()
@@ -117,6 +125,8 @@ def evaluate():
         eval_rating_min=args.eval_rating_min,
         eval_rating_max=args.eval_rating_max,
         eval_dataset_name=args.eval_dataset_name,
+        eval_num_base_puzzles=args.eval_num_base_puzzles,
+        eval_seed=args.eval_seed,
         # Preserve the original CLI behaviour: without extra flags it writes
         # eval_result.npz, including the input samples.
         output=args.output or os.path.join(os.path.dirname(args.ckpt), "eval_result.npz"),
