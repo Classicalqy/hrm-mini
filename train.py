@@ -150,8 +150,18 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
     checkpoint_dir = os.path.join("checkpoints", run_name)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    # Keep the immutable experiment budget next to every checkpoint.  This is
+    # consumed by cross_evaluate.py so comparisons cannot silently mix runs
+    # with different distributed world sizes or update counts.
+    checkpoint_config = config.model_dump() | {
+        "run_metadata": {
+            "world_size": WORLD_SIZE,
+            "steps_per_epoch_per_rank": len(train_loader) * config.cycles_per_data,
+            "total_training_steps_per_rank": total_steps,
+        }
+    }
     with open(os.path.join(checkpoint_dir, "model_config.json"), "w") as f:
-        yaml.dump(config.model_dump(), f)
+        yaml.dump(checkpoint_config, f)
 
     # -----Train & Eval loop
     progress_bar = None
