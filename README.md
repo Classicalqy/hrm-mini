@@ -114,6 +114,23 @@ The Easy configurations use `0 <= rating <= 15`; Medium uses `16 <= rating <= 30
 
 `*_trm` uses the core Tiny Recursive Model structure: one shared two-layer Transformer alternately updates `z_L` and `z_H`. It intentionally excludes the official repository's puzzle-id embeddings and ACT/Q-learning halting so that it has the same input, loss, optimizer, training loop, and test protocol as HRM and RT. Its parameter count is therefore lower by design and must be reported alongside accuracy and recursive-call budget.
 
+### Five-seed HRM/TRM comparison
+
+The `*_five_seed` configurations run seeds 1–5 and send all runs to the W&B project `hrm-trm`. They preserve the three-seed configurations above unchanged. Launch all six HRM/TRM conditions with:
+
+```bash
+for band in easy medium hard; do
+  for model in hrm trm; do
+    MLP_TASK_NAME="${band}_${model}_five_seed" \
+    OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    torchrun --nproc-per-node 8 train.py --config-name "${band}_to_hard_${model}_five_seed"
+  done
+done
+```
+
+Every epoch logs held-out Easy, Medium, and Hard exact-match accuracy for each seed.
+Use `python cross_evaluate.py --models hrm trm ...` when aggregating this two-model sweep.
+
 ### Cross-evaluate Easy / Medium / Hard
 
 `cross_evaluate.py` evaluates the final checkpoint of every HRM, RT, and TRM

@@ -35,6 +35,14 @@ class CrossEvaluationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identical"):
             validate_experiment_matrix(incomplete)
 
+    def test_matrix_can_be_limited_to_hrm_and_trm(self):
+        checkpoints = [
+            ExperimentCheckpoint(model, band, 1, Path(f"/{model}-{band}.pt"))
+            for model in ("hrm", "trm")
+            for band in ("easy", "medium", "hard")
+        ]
+        self.assertEqual(validate_experiment_matrix(checkpoints, models=("hrm", "trm")), [1])
+
     def test_aggregate_reports_mean_and_sample_standard_deviation(self):
         rows = [
             {

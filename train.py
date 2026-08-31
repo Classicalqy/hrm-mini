@@ -34,6 +34,7 @@ class TrainConfig(pydantic.BaseModel):
     data: DataConfig
 
     seeds: list[int] = [42]
+    project_name: Optional[str] = None
 
     cycles_per_data: int
     epochs: int
@@ -168,7 +169,7 @@ def train_single_seed(config: TrainConfig, seed: int, group_name: str, WORLD_SIZ
     if RANK == 0:
         progress_bar = tqdm.tqdm(total=total_steps, desc=f"seed={seed}")
 
-        wandb.init(project=config.data.name,
+        wandb.init(project=config.project_name or config.data.name,
                    name=run_name,
                    group=group_name,
                    config=config.model_dump() | {"seed": seed},

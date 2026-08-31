@@ -100,8 +100,10 @@ def parse_checkpoint(value: str) -> ExperimentCheckpoint:
     return ExperimentCheckpoint(model, train_band, seed, checkpoint_path)
 
 
-def validate_experiment_matrix(checkpoints: list[ExperimentCheckpoint]) -> list[int]:
-    """Require a complete, balanced model x train-band x seed matrix."""
+def validate_experiment_matrix(
+    checkpoints: list[ExperimentCheckpoint], models: tuple[str, ...] = MODELS
+) -> list[int]:
+    """Require a complete, balanced selected-model x train-band x seed matrix."""
     by_key: dict[tuple[str, str, int], ExperimentCheckpoint] = {}
     for checkpoint in checkpoints:
         key = (checkpoint.model, checkpoint.train_band, checkpoint.seed)
@@ -109,13 +111,13 @@ def validate_experiment_matrix(checkpoints: list[ExperimentCheckpoint]) -> list[
             raise ValueError(f"duplicate checkpoint supplied for {checkpoint.model}:{checkpoint.train_band}:{checkpoint.seed}")
         by_key[key] = checkpoint
 
-    expected_pairs = {(model, band) for model in MODELS for band in TRAIN_BANDS}
+    expected_pairs = {(model, band) for model in models for band in TRAIN_BANDS}
     actual_pairs = {(item.model, item.train_band) for item in checkpoints}
     missing_pairs = expected_pairs - actual_pairs
     unexpected_pairs = actual_pairs - expected_pairs
     if missing_pairs or unexpected_pairs:
         missing_text = ", ".join(f"{m}:{b}" for m, b in sorted(missing_pairs))
-        raise ValueError(f"complete comparison requires every model/train band pair; missing: {missing_text}")
+        raise ValueError(f"complete comparison requires every selected model/train band pair; missing: {missing_text}")
 
     seed_sets = {
         pair: {item.seed for item in checkpoints if (item.model, item.train_band) == pair}
@@ -232,11 +234,20 @@ def main() -> None:
         help="Repeat for every HRM/RT/TRM x easy/medium/hard x seed final checkpoint.",
     )
     parser.add_argument("--eval-dataset-name", help="Optional common held-out Sudoku dataset override.")
+    parser.add_argument(
+        "--models", nargs="+", choices=MODELS, default=list(MODELS),
+        help="Models included in the complete matrix (default: hrm rt trm).",
+    )
     parser.add_argument("--output-dir", default="results/cross_evaluation", help="Directory for metrics and correctness files")
     args = parser.parse_args()
 
     checkpoints: list[ExperimentCheckpoint] = args.checkpoint
-    seeds = validate_experiment_matrix(checkpoints)
+    selected_models = tuple(args.models)
+    if len(set(selected_models)) != len(selected_models):
+        parser.error("--models may not contain duplicates")
+    if any(checkpoint.model not in selected_models for checkpoint in checkpoints):
+        parser.error("every supplied checkpoint model must be listed in --models")
+    seeds = validate_experiment_matrix(checkpoints, models=selected_models)
     selected_datasets = {_selected_eval_dataset(checkpoint, args.eval_dataset_name) for checkpoint in checkpoints}
     if len(selected_datasets) != 1:
         raise ValueError(
