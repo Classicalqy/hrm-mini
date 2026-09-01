@@ -116,7 +116,7 @@ The Easy configurations use `<=53` blanks (at least 28 givens); Medium uses `54-
 
 ### Five-seed HRM/TRM comparison
 
-The `*_five_seed` configurations run seeds 1–5 and send all runs to the W&B project `hrm-trm`. They preserve the three-seed configurations above unchanged. Launch all six HRM/TRM conditions with:
+The `*_five_seed` configurations run seeds 1–5 and send all runs to the W&B project `sudoku-blank-count`. They preserve the three-seed configurations above unchanged. Launch all six HRM/TRM conditions with:
 
 ```bash
 for band in easy medium hard; do

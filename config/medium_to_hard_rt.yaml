@@ -15,6 +15,7 @@ arch:
   forward_dtype: bfloat16
 
 seeds: [1, 2, 3]
+project_name: sudoku-blank-count
 cycles_per_data: 16
 epochs: 20
 local_batch_size: 96
