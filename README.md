@@ -90,12 +90,12 @@ Download the official full Sudoku-Extreme train and held-out test CSVs before ru
 hf download --repo-type dataset --local-dir ./downloaded-datasets/sudoku-extreme-full sapientinc/sudoku-extreme train.csv test.csv
 ```
 
-Easy and Medium each select 1,000 base puzzles from the official train split, then retain the original 200 repeats and online Sudoku symmetry augmentation. All three groups evaluate on the disjoint official `sudoku-extreme/test` split, partitioned into Easy, Medium, and Hard by rating. This logs `eval/easy_exact_match`, `eval/medium_exact_match`, and `eval/hard_exact_match` to W&B after every epoch.
-Each metric uses a fixed 10,000-puzzle sample from its rating band, shared across all seeds and both architectures.
+Easy and Medium each select 1,000 base puzzles from the official train split, then retain the original 200 repeats and online Sudoku symmetry augmentation. Difficulty is defined by the number of blank cells in the input: Easy has `<=53` blanks, Medium has `54-57`, and Hard has `>=58`. All groups evaluate on the disjoint official `sudoku-extreme/test` split and log `eval/easy_exact_match`, `eval/medium_exact_match`, and `eval/hard_exact_match` after every epoch.
+Each metric uses a fixed 10,000-puzzle sample from its blank-count band, shared across all seeds and both architectures.
 
 ```bash
-python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-full --split train
-python summarize_sudoku_ratings.py --dataset ./downloaded-datasets/sudoku-extreme-full --split test
+python summarize_sudoku_blanks.py --dataset ./downloaded-datasets/sudoku-extreme-full --split train
+python summarize_sudoku_blanks.py --dataset ./downloaded-datasets/sudoku-extreme-full --split test
 
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_hrm
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name easy_to_hard_rt
@@ -110,7 +110,7 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --confi
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 torchrun --nproc-per-node 8 train.py --config-name hard_to_hard_trm
 ```
 
-The Easy configurations use `0 <= rating <= 15`; Medium uses `16 <= rating <= 30`; Hard uses `rating > 50`. Ratings `31–50` are intentionally excluded from these three experimental groups. Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
+The Easy configurations use `<=53` blanks (at least 28 givens); Medium uses `54-57` blanks (24-27 givens); Hard uses `>=58` blanks (at most 23 givens). Extreme is the original experiment and should run unchanged with `tuned_hrm` / `tuned_rt`.
 
 `*_trm` uses the core Tiny Recursive Model structure: one shared two-layer Transformer alternately updates `z_L` and `z_H`. It intentionally excludes the official repository's puzzle-id embeddings and ACT/Q-learning halting so that it has the same input, loss, optimizer, training loop, and test protocol as HRM and RT. Its parameter count is therefore lower by design and must be reported alongside accuracy and recursive-call budget.
 
@@ -134,7 +134,7 @@ Use `python cross_evaluate.py --models hrm trm ...` when aggregating this two-mo
 ### Cross-evaluate Easy / Medium / Hard
 
 `cross_evaluate.py` evaluates the final checkpoint of every HRM, RT, and TRM
-run on all three rating bands of the held-out official `test` split. It requires
+run on all three blank-count bands of the held-out official `test` split. It requires
 a complete, balanced model × train-band × seed matrix; it writes per-run CSV/
 JSON, seed mean±sample-standard-deviation aggregates, per-model 3×3 matrices,
 and per-cell correctness files. Use the same seeds for all nine model/training
@@ -156,7 +156,7 @@ python cross_evaluate.py \
 
 Repeat the nine `--checkpoint` entries for seed 2 and seed 3.
 
-The rating bands are `easy: 0–15`, `medium: 16–30`, and `hard: >=51`, matching
+The blank-count bands are `easy: <=53`, `medium: 54–57`, and `hard: >=58`, matching
 the training configs. Each cell uses the same fixed 10,000 test puzzles
 (`eval_seed=42`). Primary generalization results always use `epoch_19.pt`, the
 checkpoint after the configured 20th epoch; do not select a checkpoint by its

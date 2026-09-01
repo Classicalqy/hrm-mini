@@ -27,10 +27,10 @@ import yaml
 
 MODELS = ("hrm", "rt", "trm")
 TRAIN_BANDS = ("easy", "medium", "hard")
-DIFFICULTY_BOUNDS: dict[str, tuple[int | None, int | None]] = {
-    "easy": (0, 15),
-    "medium": (16, 30),
-    "hard": (51, None),
+BLANK_COUNT_BOUNDS: dict[str, tuple[int | None, int | None]] = {
+    "easy": (None, 53),
+    "medium": (54, 57),
+    "hard": (58, None),
 }
 EVAL_SAMPLE_SIZE = 10_000
 EVAL_SEED = 42
@@ -263,13 +263,13 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for checkpoint in sorted(checkpoints, key=lambda item: (item.model, item.train_band, item.seed)):
         budget = _budget_metadata(checkpoint)
-        for test_band, (rating_min, rating_max) in DIFFICULTY_BOUNDS.items():
+        for test_band, (blank_min, blank_max) in BLANK_COUNT_BOUNDS.items():
             print(f"\n=== model={checkpoint.model}, train={checkpoint.train_band}, seed={checkpoint.seed}, test={test_band} ===")
             metrics = evaluate_checkpoint(
                 str(checkpoint.path),
                 split="test",
-                eval_rating_min=rating_min,
-                eval_rating_max=rating_max,
+                eval_blank_min=blank_min,
+                eval_blank_max=blank_max,
                 eval_dataset_name=args.eval_dataset_name,
                 eval_num_base_puzzles=EVAL_SAMPLE_SIZE,
                 eval_seed=EVAL_SEED,
@@ -282,8 +282,8 @@ def main() -> None:
                 "train_band": checkpoint.train_band,
                 "seed": checkpoint.seed,
                 "test_band": test_band,
-                "rating_min": rating_min,
-                "rating_max": rating_max,
+                "blank_min": blank_min,
+                "blank_max": blank_max,
                 "checkpoint": str(checkpoint.path),
                 "eval_dataset_name": next(iter(selected_datasets)),
                 "eval_num_base_puzzles": EVAL_SAMPLE_SIZE,

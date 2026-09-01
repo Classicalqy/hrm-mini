@@ -2,10 +2,9 @@ name: sudoku
 dataset_name: ./downloaded-datasets/sudoku-extreme-full
 eval_dataset_name: ./downloaded-datasets/sudoku-extreme-full
 
-# tdoku backtrack-count interval. These defaults are a Medium starting point;
-# inspect the downloaded train/test_hard rating histograms before a final run.
-rating_min: 16
-rating_max: 30
+# Medium: 24-27 givens (54-57 blank cells).
+blank_min: 54
+blank_max: 57
 num_base_puzzles: 1000
 
 # Preserve the original 1,000 bases x 200 repeats training budget and online
@@ -14,21 +13,20 @@ repeat: 200
 augment: True
 
 # All models trained with this config are evaluated on the held-out test.csv
-# from Sudoku-Extreme, split by the same inclusive rating bands.
+# from Sudoku-Extreme, split by the same blank-count bands.
 eval_sets:
   easy:
     split: test
-    eval_rating_min: 0
-    eval_rating_max: 15
+    eval_blank_max: 53
   medium:
     split: test
-    eval_rating_min: 16
-    eval_rating_max: 30
+    eval_blank_min: 54
+    eval_blank_max: 57
   hard:
     split: test
-    eval_rating_min: 51
+    eval_blank_min: 58
 
-# A fixed, balanced held-out sample keeps the per-epoch cross-evaluation
+# A fixed held-out sample keeps the per-epoch cross-evaluation
 # affordable and directly comparable across architectures and training seeds.
 eval_num_base_puzzles: 10000
 eval_seed: 42

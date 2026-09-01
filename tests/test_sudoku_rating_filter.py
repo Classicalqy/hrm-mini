@@ -9,10 +9,10 @@ except ModuleNotFoundError:
     create_dataloader = None
 
 
-def _example(rating: int) -> dict[str, object]:
+def _example(rating: int, blank_count: int = 81) -> dict[str, object]:
     return {
         "source": "synthetic",
-        "question": "." * 81,
+        "question": "." * blank_count + "1" * (81 - blank_count),
         "answer": "123456789" * 9,
         "rating": rating,
     }
@@ -79,6 +79,34 @@ class SudokuRatingFilterTests(unittest.TestCase):
         self.assertEqual(len(first.dataset), 2)
         self.assertEqual(first.dataset["rating"], second.dataset["rating"])
         self.assertTrue(set(first.dataset["rating"]).issubset({20, 30, 40}))
+
+    @patch("dataset.sudoku.load_dataset")
+    def test_blank_count_filters_apply_to_training_before_selection(self, load_dataset):
+        load_dataset.return_value = Dataset.from_list([
+            _example(rating=rating, blank_count=blanks)
+            for rating, blanks in ((1, 52), (2, 53), (3, 54), (4, 57), (5, 58))
+        ])
+        loader, _ = create_dataloader(
+            "train", batch_size=2, rank=0, world_size=1, dataset_name="unused",
+            blank_min=54, blank_max=57, num_base_puzzles=2, augment=False,
+            num_workers=0, seed=1,
+        )
+        self.assertEqual(len(loader.dataset), 2)
+        self.assertTrue(all(54 <= question.count(".") <= 57 for question in loader.dataset["question"]))
+
+    @patch("dataset.sudoku.load_dataset")
+    def test_blank_count_filters_apply_only_to_evaluation(self, load_dataset):
+        load_dataset.return_value = Dataset.from_list([
+            _example(rating=rating, blank_count=blanks)
+            for rating, blanks in ((1, 52), (2, 53), (3, 54), (4, 57), (5, 58))
+        ])
+        loader, _ = create_dataloader(
+            "test", batch_size=2, rank=0, world_size=1, dataset_name="train",
+            eval_dataset_name="held-out-test", blank_min=54, blank_max=57,
+            eval_blank_max=53, num_workers=0,
+        )
+        self.assertEqual(load_dataset.call_args.args[0], "held-out-test")
+        self.assertTrue(all(question.count(".") <= 53 for question in loader.dataset["question"]))
 
 
 if __name__ == "__main__":

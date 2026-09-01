@@ -64,9 +64,11 @@ def _select_training_puzzles(
     seed: int,
     rating_min: int | None,
     rating_max: int | None,
+    blank_min: int | None,
+    blank_max: int | None,
     num_base_puzzles: int | None,
 ) -> Dataset:
-    """Filter official Sudoku-Extreme train data before repeat/augmentation."""
+    """Filter training puzzles before repeat/augmentation."""
     if rating_min is not None or rating_max is not None:
         if "rating" not in dataset.column_names:
             raise ValueError("rating filtering requires a dataset with a 'rating' column")
@@ -75,6 +77,16 @@ def _select_training_puzzles(
         dataset = dataset.filter(lambda rating: lower <= rating <= upper, input_columns="rating")  # pyright: ignore[reportAttributeAccessIssue]
         if len(dataset) == 0:
             raise ValueError(f"no training puzzles have ratings in [{rating_min}, {rating_max}]")
+
+    if blank_min is not None or blank_max is not None:
+        lower = blank_min if blank_min is not None else -np.inf
+        upper = blank_max if blank_max is not None else np.inf
+        dataset = dataset.filter(
+            lambda question: lower <= question.count(".") <= upper,
+            input_columns="question",
+        )  # pyright: ignore[reportAttributeAccessIssue]
+        if len(dataset) == 0:
+            raise ValueError(f"no training puzzles have blank counts in [{blank_min}, {blank_max}]")
 
     if num_base_puzzles is not None:
         if num_base_puzzles <= 0:
@@ -89,6 +101,8 @@ def _filter_evaluation_puzzles(
     dataset: Dataset,
     rating_min: int | None,
     rating_max: int | None,
+    blank_min: int | None,
+    blank_max: int | None,
     num_base_puzzles: int | None,
     seed: int,
 ) -> Dataset:
@@ -102,6 +116,16 @@ def _filter_evaluation_puzzles(
         dataset = dataset.filter(lambda rating: lower <= rating <= upper, input_columns="rating")  # pyright: ignore[reportAttributeAccessIssue]
         if len(dataset) == 0:
             raise ValueError(f"no evaluation puzzles have ratings in [{rating_min}, {rating_max}]")
+
+    if blank_min is not None or blank_max is not None:
+        lower = blank_min if blank_min is not None else -np.inf
+        upper = blank_max if blank_max is not None else np.inf
+        dataset = dataset.filter(
+            lambda question: lower <= question.count(".") <= upper,
+            input_columns="question",
+        )  # pyright: ignore[reportAttributeAccessIssue]
+        if len(dataset) == 0:
+            raise ValueError(f"no evaluation puzzles have blank counts in [{blank_min}, {blank_max}]")
 
     if num_base_puzzles is not None:
         if num_base_puzzles <= 0:
@@ -125,9 +149,13 @@ def create_dataloader(
     repeat: int = 1,
     rating_min: int | None = None,
     rating_max: int | None = None,
+    blank_min: int | None = None,
+    blank_max: int | None = None,
     num_base_puzzles: int | None = None,
     eval_rating_min: int | None = None,
     eval_rating_max: int | None = None,
+    eval_blank_min: int | None = None,
+    eval_blank_max: int | None = None,
     eval_num_base_puzzles: int | None = None,
     eval_seed: int = 42,
     num_workers: int = 1,
@@ -143,13 +171,21 @@ def create_dataloader(
         "rating": Value("int64"),
     }))  # pyright: ignore[reportAssignmentType]
     if is_train:
-        dataset = _select_training_puzzles(dataset, seed, rating_min, rating_max, num_base_puzzles)
+        dataset = _select_training_puzzles(
+            dataset, seed, rating_min, rating_max, blank_min, blank_max, num_base_puzzles
+        )
         dataset = dataset.repeat(repeat)  # pyright: ignore[reportAssignmentType]
     else:
         # Keep the historical evaluation behaviour unless explicit eval-only
         # bounds are supplied. Training bounds must not leak into test data.
         dataset = _filter_evaluation_puzzles(
-            dataset, eval_rating_min, eval_rating_max, eval_num_base_puzzles, eval_seed
+            dataset,
+            eval_rating_min,
+            eval_rating_max,
+            eval_blank_min,
+            eval_blank_max,
+            eval_num_base_puzzles,
+            eval_seed,
         )
 
     loader_kwargs: dict[str, object] = {

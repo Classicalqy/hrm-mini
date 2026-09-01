@@ -2,10 +2,23 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from cross_evaluate import ExperimentCheckpoint, aggregate_rows, parse_checkpoint, validate_experiment_matrix
+from cross_evaluate import (
+    BLANK_COUNT_BOUNDS,
+    ExperimentCheckpoint,
+    aggregate_rows,
+    parse_checkpoint,
+    validate_experiment_matrix,
+)
 
 
 class CrossEvaluationTests(unittest.TestCase):
+    def test_cross_evaluation_uses_the_configured_blank_count_bands(self):
+        self.assertEqual(BLANK_COUNT_BOUNDS, {
+            "easy": (None, 53),
+            "medium": (54, 57),
+            "hard": (58, None),
+        })
+
     def test_parser_requires_declared_final_checkpoint_and_matching_architecture(self):
         with TemporaryDirectory() as temp_dir:
             checkpoint_dir = Path(temp_dir)

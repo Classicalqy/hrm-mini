@@ -17,6 +17,8 @@ def evaluate_checkpoint(
     split: str = "test",
     eval_rating_min: int | None = None,
     eval_rating_max: int | None = None,
+    eval_blank_min: int | None = None,
+    eval_blank_max: int | None = None,
     eval_dataset_name: str | None = None,
     eval_num_base_puzzles: int | None = None,
     eval_seed: int | None = None,
@@ -25,8 +27,8 @@ def evaluate_checkpoint(
 ) -> dict[str, float | int]:
     """Evaluate one checkpoint and return exact-match metrics.
 
-    The ``eval_rating_*`` arguments filter only the evaluation split. They do
-    not alter the training rating bounds stored in ``model_config.json``.
+    The ``eval_rating_*`` and ``eval_blank_*`` arguments filter only the
+    evaluation split. They do not alter the saved training selection rules.
     """
     with open(os.path.join(os.path.dirname(ckpt), "model_config.json"), "r") as f:
         config = TrainConfig(**yaml.safe_load(f))
@@ -40,6 +42,10 @@ def evaluate_checkpoint(
         data_kwargs["eval_rating_min"] = eval_rating_min
     if eval_rating_max is not None:
         data_kwargs["eval_rating_max"] = eval_rating_max
+    if eval_blank_min is not None:
+        data_kwargs["eval_blank_min"] = eval_blank_min
+    if eval_blank_max is not None:
+        data_kwargs["eval_blank_max"] = eval_blank_max
     if eval_dataset_name is not None:
         data_kwargs["eval_dataset_name"] = eval_dataset_name
     if eval_num_base_puzzles is not None:
@@ -113,6 +119,8 @@ def evaluate():
     parser.add_argument("--split", type=str, default="test", help="Dataset split to evaluate on")
     parser.add_argument("--eval-rating-min", type=int, help="Optional inclusive lower Sudoku rating bound for evaluation")
     parser.add_argument("--eval-rating-max", type=int, help="Optional inclusive upper Sudoku rating bound for evaluation")
+    parser.add_argument("--eval-blank-min", type=int, help="Optional inclusive lower blank-count bound for evaluation")
+    parser.add_argument("--eval-blank-max", type=int, help="Optional inclusive upper blank-count bound for evaluation")
     parser.add_argument("--eval-dataset-name", help="Optional dataset path/name to use instead of the checkpoint's eval_dataset_name")
     parser.add_argument("--eval-num-base-puzzles", type=int, help="Optional deterministic evaluation sample size")
     parser.add_argument("--eval-seed", type=int, help="Optional deterministic evaluation sample seed")
@@ -124,6 +132,8 @@ def evaluate():
         split=args.split,
         eval_rating_min=args.eval_rating_min,
         eval_rating_max=args.eval_rating_max,
+        eval_blank_min=args.eval_blank_min,
+        eval_blank_max=args.eval_blank_max,
         eval_dataset_name=args.eval_dataset_name,
         eval_num_base_puzzles=args.eval_num_base_puzzles,
         eval_seed=args.eval_seed,

@@ -2,29 +2,28 @@ name: sudoku
 dataset_name: ./downloaded-datasets/sudoku-extreme-full
 eval_dataset_name: ./downloaded-datasets/sudoku-extreme-full
 
-# The loader's rating bounds are inclusive. Sudoku ratings are non-negative.
-rating_min: 0
-rating_max: 15
+# Difficulty is defined by the number of blank cells ('.') in the input grid.
+# Easy: at least 28 givens.
+blank_max: 53
 num_base_puzzles: 1000
 repeat: 200
 augment: True
 
 # All models trained with this config are evaluated on the held-out test.csv
-# from Sudoku-Extreme, split by the same inclusive rating bands.
+# from Sudoku-Extreme, split by the same blank-count bands.
 eval_sets:
   easy:
     split: test
-    eval_rating_min: 0
-    eval_rating_max: 15
+    eval_blank_max: 53
   medium:
     split: test
-    eval_rating_min: 16
-    eval_rating_max: 30
+    eval_blank_min: 54
+    eval_blank_max: 57
   hard:
     split: test
-    eval_rating_min: 51
+    eval_blank_min: 58
 
-# A fixed, balanced held-out sample keeps the per-epoch cross-evaluation
+# A fixed held-out sample keeps the per-epoch cross-evaluation
 # affordable and directly comparable across architectures and training seeds.
 eval_num_base_puzzles: 10000
 eval_seed: 42
