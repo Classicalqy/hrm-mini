@@ -1,0 +1,77 @@
+experiment:
+  name: rt_vs_flow_smoke
+  seeds: [1]
+  output_root: results/rt_vs_flow_dynamics/smoke
+  checkpoint_root: checkpoints/rt_vs_flow_dynamics/smoke
+  device: cpu
+  wandb: false
+
+model:
+  num_layers: 1
+  hidden_size: 32
+  intermediate_size: 64
+  head_dim: 16
+  norm_eps: 1.0e-6
+  rope_theta: 10000.0
+  forward_dtype: float32
+  codebook_seed: 20260906
+  decoder_temperature: 10.0
+
+schedule:
+  micro_steps: 2
+  outer_blocks: 2
+  epochs: 1
+
+optimizer:
+  lr: 0.001
+  warmup_steps: 0
+  beta1: 0.9
+  beta2: 0.95
+  weight_decay: 0.0
+  ema: null
+  fm_weight: 1.0
+  ce_weight: 1.0
+
+conditions:
+  matched_rt: {kind: rt, curvature_lambda: 0.0}
+  rt_smooth: {kind: rt, curvature_lambda: 0.1}
+  flow_linear: {kind: flow, beta: 0.0}
+  flow_bent_05: {kind: flow, beta: 0.5}
+
+toy:
+  train_count: 256
+  test_count: 64
+  steps: 16
+  epochs: 2
+  batch_size: 64
+  width: 32
+  depth: 2
+  lr: 0.003
+
+sudoku:
+  smoke: true
+  train_count: 8
+  test_count: 4
+  batch_size: 4
+  seed: 1
+
+trace:
+  sample_count: 4
+  projection_dim: 8
+  matched_steps: 4
+  native_steps: 8
+  flow_nfe: [4, 8]
+  fixed_window: 2
+  state_eps: 0.001
+  logit_eps: 0.0001
+  sensitivity_state_eps: [0.01, 0.0001]
+  perturb_max_puzzles: 2
+  perturb_directions: 2
+  perturb_sigmas: [0.001, 0.01, 0.1]
+  perturb_continue_steps: 4
+  jacobian_max_puzzles: 1
+  jacobian_iterations: 2
+
+analysis:
+  bootstrap_samples: 50
+  bootstrap_seed: 20260906
