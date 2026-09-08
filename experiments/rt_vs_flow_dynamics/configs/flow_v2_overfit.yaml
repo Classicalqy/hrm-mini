@@ -1,0 +1,67 @@
+experiment:
+  name: rt_vs_flow_dynamics_flow_v2_overfit
+  seeds: [0]
+  output_root: results/rt_vs_flow_dynamics/flow_v2_overfit
+  checkpoint_root: checkpoints/rt_vs_flow_dynamics/flow_v2_overfit
+  device: cuda
+  wandb: false
+  reset_loader_per_condition: true
+
+model:
+  num_layers: 4
+  hidden_size: 512
+  intermediate_size: 2048
+  head_dim: 64
+  norm_eps: 1.0e-6
+  rope_theta: 10000.0
+  forward_dtype: bfloat16
+  codebook_seed: 20260906
+  decoder_temperature: 10.0
+
+schedule: {micro_steps: 7, outer_blocks: 16, epochs: 100}
+optimizer:
+  lr: 0.0001
+  warmup_steps: 200
+  beta1: 0.9
+  beta2: 0.95
+  weight_decay: 1.0
+  ema: 0.999
+  fm_weight: 1.0
+  ce_weight: 1.0
+
+conditions:
+  flow_v2_teacher:
+    {kind: flow, version: 2, state_mode: teacher, beta: 0.0, fm_weight: 1.0, endpoint_ce_weight: 1.0, endpoint_cos_weight: 1.0}
+  flow_v2_onpolicy:
+    {kind: flow, version: 2, state_mode: onpolicy, beta: 0.0, fm_weight: 1.0, endpoint_ce_weight: 1.0, endpoint_cos_weight: 1.0}
+
+toy: {train_count: 32, test_count: 8, steps: 8, epochs: 1, batch_size: 8, width: 32, depth: 2, lr: 0.001}
+sudoku:
+  smoke: false
+  dataset_name: ./downloaded-datasets/sudoku-extreme-1k
+  eval_split: test_hard
+  diagnostic_overfit: true
+  num_base_puzzles: 32
+  repeat: 1
+  augment: false
+  batch_size: 32
+  seed: 0
+  num_workers: 1
+  drop_last: false
+trace:
+  sample_count: 32
+  projection_dim: 8
+  matched_steps: 112
+  native_steps: 448
+  flow_nfe: [112]
+  fixed_window: 8
+  state_eps: 0.001
+  logit_eps: 0.0001
+  sensitivity_state_eps: [0.01, 0.0001]
+  perturb_max_puzzles: 0
+  perturb_directions: 0
+  perturb_sigmas: []
+  perturb_continue_steps: 112
+  jacobian_max_puzzles: 0
+  jacobian_iterations: 0
+analysis: {bootstrap_samples: 50, bootstrap_seed: 20260906, overfit_exact_match: 0.95}

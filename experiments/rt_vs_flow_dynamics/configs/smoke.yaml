@@ -5,6 +5,7 @@ experiment:
   checkpoint_root: checkpoints/rt_vs_flow_dynamics/smoke
   device: cpu
   wandb: false
+  reset_loader_per_condition: true
 
 model:
   num_layers: 1
@@ -37,6 +38,8 @@ conditions:
   rt_smooth: {kind: rt, curvature_lambda: 0.1}
   flow_linear: {kind: flow, beta: 0.0}
   flow_bent_05: {kind: flow, beta: 0.5}
+  flow_v2_teacher: {kind: flow, version: 2, state_mode: teacher, beta: 0.0}
+  flow_v2_onpolicy: {kind: flow, version: 2, state_mode: onpolicy, beta: 0.0}
 
 toy:
   train_count: 256

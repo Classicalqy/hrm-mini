@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import types
 
 import numpy as np
@@ -13,7 +14,13 @@ from experiments.rt_vs_flow_dynamics.models.common import (
     make_orthogonal_codebook,
     sinusoidal_time_embedding,
 )
-from experiments.rt_vs_flow_dynamics.models.flow import FlowMatchingTransformer, interpolant
+from experiments.rt_vs_flow_dynamics.models.flow import (
+    FlowMatchingTransformer,
+    interpolant,
+    reconstruct_endpoint,
+    relative_velocity_loss,
+)
+from dataset.sudoku import evaluation_partition_for_question
 from experiments.rt_vs_flow_dynamics.models.matched_rt import MatchedRecurrentTransformer
 from experiments.rt_vs_flow_dynamics.models.native_rt import NativeRTAdapter
 from experiments.rt_vs_flow_dynamics.tasks.toy import generate_toy_trajectories
@@ -23,6 +30,8 @@ from experiments.rt_vs_flow_dynamics.trace import (
     top_jacobian_singular_value,
     trajectory_metrics,
 )
+from experiments.rt_vs_flow_dynamics.cli import summarize_fair_comparison
+from experiments.rt_vs_flow_dynamics.train import flow_on_policy_ratio
 
 
 def tiny_config() -> dict[str, object]:
@@ -56,6 +65,23 @@ def test_interpolant_has_exact_endpoints_and_derivative() -> None:
     torch.testing.assert_close((after - before) / (2 * epsilon), velocity, atol=2e-3, rtol=2e-3)
 
 
+def test_flow_endpoint_reconstruction_is_exact_for_straight_and_bent_paths() -> None:
+    z0 = torch.randn(3, 5, 32)
+    z1 = torch.randn(3, 5, 32)
+    time = torch.tensor([0.0, 0.37, 0.91])
+    for beta in (0.0, 0.5, 1.0):
+        path, velocity = interpolant(z0, z1, time, beta)
+        endpoint = reconstruct_endpoint(path, velocity, z0, z1, time, beta)
+        torch.testing.assert_close(endpoint, z1, atol=2e-5, rtol=2e-5)
+
+
+def test_relative_flow_loss_does_not_shrink_with_hidden_size() -> None:
+    for hidden_size in (32, 512):
+        target = torch.randn(4, 7, hidden_size)
+        loss = relative_velocity_loss(torch.zeros_like(target), target)
+        torch.testing.assert_close(loss, torch.ones_like(loss), atol=1e-6, rtol=1e-6)
+
+
 def test_controlled_models_have_parameter_parity() -> None:
     rt = MatchedRecurrentTransformer(tiny_config())
     flow = FlowMatchingTransformer(tiny_config())
@@ -77,6 +103,86 @@ def test_flow_euler_solver_integrates_constant_velocity() -> None:
     expected = initial + .25
     torch.testing.assert_close(result_8, expected)
     torch.testing.assert_close(result_32, expected)
+
+
+def test_flow_v2_chunks_use_global_times_and_match_rollout_carry() -> None:
+    model = FlowMatchingTransformer(tiny_config())
+    observed_times: list[float] = []
+
+    def constant_velocity(self, state, input_ids, t):
+        del input_ids
+        observed_times.extend(float(value) for value in t)
+        return torch.ones_like(state) * .25
+
+    model.velocity = types.MethodType(constant_velocity, model)
+    inputs = torch.zeros(1, 82, dtype=torch.long)
+    targets = torch.ones(1, 82, dtype=torch.long)
+    state = model.initial_state(inputs).clone()
+    for start in (0, 2):
+        _, _, state, _ = model(
+            inputs, targets, state, start_step=start, total_steps=4, micro_steps=2,
+            on_policy_ratio=1.0,
+        )
+    expected = model.initial_state(inputs) + .25
+    torch.testing.assert_close(state, expected)
+    assert observed_times == [0.0, 0.25, 0.5, 0.75]
+
+
+def test_flow_v2_rejects_invalid_on_policy_ratio() -> None:
+    model = FlowMatchingTransformer(tiny_config())
+    inputs = torch.zeros(1, 82, dtype=torch.long)
+    with np.testing.assert_raises(ValueError):
+        model(inputs, inputs, model.initial_state(inputs), 0, 4, 2, on_policy_ratio=1.1)
+
+
+def test_flow_on_policy_schedule_boundaries() -> None:
+    assert flow_on_policy_ratio("teacher", 1.0) == 0.0
+    assert flow_on_policy_ratio("onpolicy", 0.2) == 0.0
+    assert flow_on_policy_ratio("onpolicy", 0.4) == .5
+    assert flow_on_policy_ratio("onpolicy", 0.6) == 1.0
+
+
+def test_evaluation_partition_is_stable_and_disjoint() -> None:
+    questions = [f"puzzle-{index}" for index in range(1000)]
+    first = [evaluation_partition_for_question(value, .2, 20260908) for value in questions]
+    second = [evaluation_partition_for_question(value, .2, 20260908) for value in questions]
+    assert first == second
+    assert set(first) == {"dev", "test"}
+    assert 150 <= first.count("dev") <= 250
+
+
+def test_fair_comparison_gate_and_accuracy_matching(tmp_path) -> None:
+    evaluation = tmp_path / "evaluation"
+    evaluation.mkdir()
+    fields = [
+        "condition", "seed", "epoch", "checkpoint", "dev_exact_match",
+        "dev_cell_accuracy", "dev_constraint_violations", "test_exact_match",
+    ]
+    for condition, offset in (("flow", 0.0), ("matched_rt", 0.02)):
+        rows = []
+        for seed in (1, 2, 3):
+            for epoch, dev in ((0, .58), (1, .65 + offset)):
+                rows.append({
+                    "condition": condition, "seed": seed, "epoch": epoch,
+                    "checkpoint": f"{condition}-{seed}-{epoch}.pt", "dev_exact_match": dev,
+                    "dev_cell_accuracy": .8 + dev / 10, "dev_constraint_violations": 2.0,
+                    "test_exact_match": dev - .01,
+                })
+        with (evaluation / f"checkpoint_evaluation_{condition}.csv").open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(rows)
+    config = {
+        "experiment": {"output_root": str(tmp_path)},
+        "analysis": {"flow_gate": {
+            "max_mean_gap": .05, "minimum_seed_exact_match": .5,
+            "max_seed_range": .1, "accuracy_match_tolerance": .03,
+        }},
+    }
+    path, passed = summarize_fair_comparison(config, "flow")
+    assert passed and path.is_file()
+    with path.open() as handle:
+        rows = list(csv.DictReader(handle))
+    assert all(row["accuracy_match_valid"] == "True" for row in rows)
+    assert json.loads((evaluation / "flow_gate.json").read_text())["passed"] is True
 
 
 def test_native_adapter_matches_group_forward() -> None:

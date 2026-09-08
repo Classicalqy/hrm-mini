@@ -1,9 +1,9 @@
 from functools import partial
+from hashlib import sha256
 
 import numpy as np
 import torch
 from torch import Tensor
-from datasets import load_dataset, Features, Value
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 
 def shuffle_sudoku(board: np.ndarray, solution: np.ndarray):
@@ -138,6 +138,39 @@ def _filter_evaluation_puzzles(
     return dataset
 
 
+def evaluation_partition_for_question(question: str, dev_fraction: float, seed: int) -> str:
+    """Assign a puzzle to a stable content-hash partition."""
+    if not 0.0 < dev_fraction < 1.0:
+        raise ValueError("eval_dev_fraction must be between zero and one")
+    digest = sha256(f"{seed}:{question}".encode()).digest()
+    value = int.from_bytes(digest[:8], "big") / float(1 << 64)
+    return "dev" if value < dev_fraction else "test"
+
+
+def _partition_evaluation_dataset(
+    dataset: Dataset, partition: str | None, dev_fraction: float, seed: int
+) -> Dataset:
+    if partition in {None, "all"}:
+        return dataset
+    if partition not in {"dev", "test"}:
+        raise ValueError("eval_partition must be one of: all, dev, test")
+    selected = dataset.filter(
+        lambda question: evaluation_partition_for_question(question, dev_fraction, seed) == partition,
+        input_columns="question",
+    )  # pyright: ignore[reportAttributeAccessIssue]
+    if len(selected) == 0:
+        raise ValueError(f"evaluation partition {partition!r} is empty")
+    return selected
+
+
+def _evaluation_fingerprint(dataset: Dataset) -> str:
+    digest = sha256()
+    for question in dataset["question"]:  # pyright: ignore[reportIndexIssue]
+        digest.update(str(question).encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def create_dataloader(
     split: str,
     batch_size: int,
@@ -158,10 +191,15 @@ def create_dataloader(
     eval_blank_max: int | None = None,
     eval_num_base_puzzles: int | None = None,
     eval_seed: int = 42,
+    eval_partition: str | None = None,
+    eval_dev_fraction: float = 0.2,
+    eval_partition_seed: int = 20260908,
     num_workers: int = 1,
     seed: int = 42,
     drop_last: bool = True,
 ):
+    from datasets import load_dataset, Features, Value
+
     is_train = split == "train"
     source_dataset_name = dataset_name if is_train or eval_dataset_name is None else eval_dataset_name
     dataset: Dataset = load_dataset(source_dataset_name, split=split, features = Features({
@@ -187,6 +225,11 @@ def create_dataloader(
             eval_num_base_puzzles,
             eval_seed,
         )
+        dataset = _partition_evaluation_dataset(
+            dataset, eval_partition, eval_dev_fraction, eval_partition_seed
+        )
+
+    evaluation_fingerprint = _evaluation_fingerprint(dataset) if not is_train else None
 
     loader_kwargs: dict[str, object] = {
         "batch_size": batch_size,
@@ -207,5 +250,8 @@ def create_dataloader(
         # Dataset metadata
         "vocab_size": 10,
         "seq_len": 82,
-        "is_causal": False
+        "is_causal": False,
+        "dataset_count": len(dataset),
+        "dataset_fingerprint": evaluation_fingerprint,
+        "eval_partition": eval_partition if not is_train else None,
     }

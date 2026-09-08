@@ -28,8 +28,9 @@ class SyntheticSudokuDataset(Dataset[tuple[Tensor, Tensor]]):
 
 
 def create_sudoku_loaders(
-    config: dict[str, Any], rank: int = 0, world_size: int = 1, smoke: bool = False
-) -> tuple[DataLoader, DataLoader, dict[str, int | bool]]:
+    config: dict[str, Any], rank: int = 0, world_size: int = 1, smoke: bool = False,
+    eval_partition: str | None = None,
+) -> tuple[DataLoader, DataLoader, dict[str, Any]]:
     if smoke:
         batch_size = int(config.get("batch_size", 4))
         train = SyntheticSudokuDataset(int(config.get("train_count", 16)), int(config.get("seed", 1)))
@@ -46,15 +47,30 @@ def create_sudoku_loaders(
     batch_size = int(common.pop("batch_size"))
     seed = int(common.pop("seed", 42))
     eval_split = str(common.pop("eval_split", "test_hard"))
+    configured_partition = str(common.pop("eval_partition", "all"))
+    partition = configured_partition if eval_partition is None else eval_partition
+    diagnostic_overfit = bool(common.pop("diagnostic_overfit", False))
     train_loader, metadata = create_dataloader(
         "train", batch_size, rank=rank, world_size=world_size, seed=seed, **common
     )
+    if diagnostic_overfit:
+        metadata = dict(metadata) | {
+            "evaluation_partition": "train", "evaluation_dataset_fingerprint": "training-data"
+        }
+        return train_loader, train_loader, metadata
     eval_config = dict(common)
     eval_config["augment"] = False
     eval_config["repeat"] = 1
-    eval_loader, _ = create_dataloader(
+    eval_config["drop_last"] = False
+    eval_config["eval_partition"] = partition
+    eval_loader, eval_metadata = create_dataloader(
         eval_split, batch_size, rank=rank, world_size=world_size, seed=seed, **eval_config
     )
+    metadata = dict(metadata) | {
+        "evaluation_partition": partition,
+        "evaluation_dataset_fingerprint": eval_metadata.get("dataset_fingerprint"),
+        "evaluation_dataset_count": eval_metadata.get("dataset_count"),
+    }
     return train_loader, eval_loader, metadata
 
 

@@ -58,6 +58,67 @@ python -m experiments.rt_vs_flow_dynamics.cli analyze \
   --config experiments/rt_vs_flow_dynamics/configs/full.yaml
 ```
 
+## Flow V2: establish a working baseline
+
+Flow V2 uses a hidden-size-independent relative velocity loss and a seven-call
+chunked rollout. It keeps parameter count, optimizer steps, backbone calls, and
+the 112-NFE main evaluation matched to RT. V1 outputs are not overwritten.
+
+First run the real-Sudoku 32-puzzle overfit gate:
+
+```bash
+python -m experiments.rt_vs_flow_dynamics.cli diagnose-flow \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2_overfit.yaml \
+  --condition flow_v2_teacher flow_v2_onpolicy
+```
+
+Use development seed 0 to choose teacher or on-policy training:
+
+```bash
+torchrun --nproc-per-node 8 -m experiments.rt_vs_flow_dynamics.cli train-sudoku \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --condition flow_v2_teacher flow_v2_onpolicy --seed 0
+
+python -m experiments.rt_vs_flow_dynamics.cli evaluate-checkpoints \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --condition flow_v2_teacher --seed 0
+python -m experiments.rt_vs_flow_dynamics.cli evaluate-checkpoints \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --condition flow_v2_onpolicy --seed 0
+python -m experiments.rt_vs_flow_dynamics.cli select-flow \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml
+```
+
+Freeze the selected condition, then run formal seeds and compare it with the
+existing RT checkpoints:
+
+```bash
+torchrun --nproc-per-node 8 -m experiments.rt_vs_flow_dynamics.cli train-sudoku \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --condition flow_v2_onpolicy --seed 1 2 3
+
+python -m experiments.rt_vs_flow_dynamics.cli evaluate-checkpoints \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --condition flow_v2_onpolicy
+python -m experiments.rt_vs_flow_dynamics.cli evaluate-checkpoints \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --condition matched_rt \
+  --checkpoint-root checkpoints/rt_vs_flow_dynamics/full
+python -m experiments.rt_vs_flow_dynamics.cli compare-flow \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --flow-condition flow_v2_onpolicy
+
+python -m experiments.rt_vs_flow_dynamics.cli trace-comparison \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml \
+  --flow-condition flow_v2_onpolicy
+python -m experiments.rt_vs_flow_dynamics.cli analyze \
+  --config experiments/rt_vs_flow_dynamics/configs/flow_v2.yaml
+```
+
+`compare-flow` writes budget-matched and accuracy-matched checkpoint choices and
+fails unless Flow passes the preregistered performance gate. V2 `analyze` likewise
+refuses trajectory interpretation until the gate passes.
+
 ## Interpretation
 
 Flow NFE 56, 112, and 224 all integrate the same normalized interval `[0, 1]`.

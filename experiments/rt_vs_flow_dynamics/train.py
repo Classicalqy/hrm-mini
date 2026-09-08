@@ -16,9 +16,9 @@ import yaml
 
 from adam_atan2 import AdamATan2
 from .models.common import count_trainable_parameters
-from .models.flow import FlowMatchingTransformer
+from .models.flow import FlowMatchingTransformer, reconstruct_endpoint
 from .models.matched_rt import MatchedRecurrentTransformer
-from .tasks.sudoku import create_sudoku_loaders
+from .tasks.sudoku import create_sudoku_loaders, sudoku_violations
 from .tasks.toy import (
     FAMILY_NAMES,
     ToyBatch,
@@ -46,6 +46,8 @@ def load_config(path: str | Path) -> dict[str, Any]:
     for name, specification in config["conditions"].items():
         if specification.get("kind") not in {"rt", "flow"}:
             raise ValueError(f"condition {name!r} must have kind 'rt' or 'flow'")
+        if int(specification.get("version", 1)) not in {1, 2}:
+            raise ValueError(f"condition {name!r} has unsupported training version")
     return config
 
 
@@ -175,23 +177,67 @@ def _set_lr(optimizer: torch.optim.Optimizer, base_lr: float, step: int, warmup:
     return lr
 
 
+def flow_on_policy_ratio(state_mode: str, progress: float) -> float:
+    if state_mode not in {"teacher", "onpolicy"}:
+        raise ValueError("Flow V2 state_mode must be 'teacher' or 'onpolicy'")
+    if state_mode == "teacher" or progress <= 0.2:
+        return 0.0
+    if progress >= 0.6:
+        return 1.0
+    return (progress - 0.2) / 0.4
+
+
 def _unwrap(model: nn.Module) -> nn.Module:
     return model.module if isinstance(model, DDP) else model
 
 
 @torch.inference_mode()
-def evaluate_sudoku(model: nn.Module, loader: Iterable[tuple[Tensor, Tensor]], steps: int, device: torch.device) -> tuple[int, int]:
+def evaluate_sudoku(
+    model: nn.Module, loader: Iterable[tuple[Tensor, Tensor]], steps: int, device: torch.device
+) -> dict[str, float | int]:
     core = _unwrap(model)
-    correct = torch.zeros(2, dtype=torch.long, device=device)
+    counts = torch.zeros(3, dtype=torch.float64, device=device)
+    sample_count = 0
     for inputs, targets in loader:
         inputs, targets = inputs.to(device), targets.to(device)
         logits = core.rollout(inputs, steps).logits
         predictions = logits.argmax(dim=-1)
-        correct[0] += (predictions == targets).all(dim=-1).sum()
+        counts[0] += (predictions == targets).all(dim=-1).sum()
+        counts[1] += (predictions == targets).to(torch.float32).mean(dim=-1).sum()
+        counts[2] += sudoku_violations(predictions).sum()
+        sample_count += targets.shape[0]
+    total_tensor = torch.tensor(float(sample_count), dtype=torch.float64, device=device)
+    if dist.is_initialized():
+        dist.reduce(counts, dst=0)
+        dist.reduce(total_tensor, dst=0)
+    denominator = max(float(total_tensor.item()), 1.0)
+    return {
+        "correct": int(counts[0].item()), "total": int(total_tensor.item()),
+        "exact_match": float(counts[0].item() / denominator),
+        "cell_accuracy": float(counts[1].item() / denominator),
+        "constraint_violations": float(counts[2].item() / denominator),
+    }
+
+
+@torch.inference_mode()
+def flow_t0_endpoint_accuracy(
+    model: nn.Module, loader: Iterable[tuple[Tensor, Tensor]], device: torch.device, beta: float
+) -> float:
+    core = _unwrap(model)
+    assert isinstance(core, FlowMatchingTransformer)
+    correct = torch.zeros(2, dtype=torch.float64, device=device)
+    for inputs, targets in loader:
+        inputs, targets = inputs.to(device), targets.to(device)
+        z0, z1 = core.initial_state(inputs), core.target_state(targets)
+        time = torch.zeros(inputs.shape[0], device=device)
+        velocity = core.velocity(z0, inputs, time)
+        endpoint = reconstruct_endpoint(z0, velocity, z0, z1, time, beta)
+        prediction = core.decode(endpoint).argmax(dim=-1)
+        correct[0] += (prediction == targets).all(dim=-1).sum()
         correct[1] += targets.shape[0]
     if dist.is_initialized():
         dist.reduce(correct, dst=0)
-    return int(correct[0]), int(correct[1])
+    return float(correct[0].item() / max(correct[1].item(), 1.0))
 
 
 def train_sudoku(config: dict[str, Any], conditions: list[str]) -> Path:
@@ -209,7 +255,13 @@ def train_sudoku(config: dict[str, Any], conditions: list[str]) -> Path:
             sudoku_config, rank=rank, world_size=world_size, smoke=smoke
         )
         parameter_count = assert_parameter_parity(config, metadata)
-        for condition in conditions:
+        for condition_index, condition in enumerate(conditions):
+            if condition_index > 0 and bool(config["experiment"].get("reset_loader_per_condition", False)):
+                train_loader, eval_loader, recreated_metadata = create_sudoku_loaders(
+                    sudoku_config, rank=rank, world_size=world_size, smoke=smoke
+                )
+                if recreated_metadata != metadata:
+                    raise RuntimeError("recreated fair-comparison dataloader metadata changed between conditions")
             if condition not in config["conditions"]:
                 raise KeyError(f"unknown condition {condition!r}")
             torch.manual_seed(int(seed)); torch.cuda.manual_seed_all(int(seed))
@@ -230,6 +282,7 @@ def train_sudoku(config: dict[str, Any], conditions: list[str]) -> Path:
             micro_steps = int(schedule["micro_steps"]); outer_blocks = int(schedule["outer_blocks"])
             total_steps = micro_steps * outer_blocks
             optimizer_steps = 0; backbone_calls = 0; started = time.perf_counter()
+            planned_optimizer_steps = len(train_loader) * int(schedule["epochs"]) * outer_blocks
             logs: list[dict[str, object]] = []
             wandb_run = None
             if rank == 0 and bool(config["experiment"].get("wandb", False)):
@@ -261,25 +314,56 @@ def train_sudoku(config: dict[str, Any], conditions: list[str]) -> Path:
                                 float(specification.get("curvature_lambda", 0.0)),
                             )
                             fm = torch.zeros_like(ce)
+                            flow_metrics: dict[str, Tensor] = {}
                         else:
-                            times = torch.rand((micro_steps, inputs.shape[0]), generator=generator, device=device)
-                            loss, fm, ce = model(
-                                inputs, targets, times, float(specification.get("beta", 0.0)),
-                                float(optimizer_config.get("fm_weight", 1.0)),
-                                float(optimizer_config.get("ce_weight", 1.0)),
-                            )
-                            auxiliary = fm
+                            if int(specification.get("version", 1)) == 1:
+                                times = torch.rand((micro_steps, inputs.shape[0]), generator=generator, device=device)
+                                loss, fm, ce = model(
+                                    inputs, targets, beta=float(specification.get("beta", 0.0)),
+                                    fm_weight=float(optimizer_config.get("fm_weight", 1.0)),
+                                    legacy_times=times,
+                                    legacy_ce_weight=float(optimizer_config.get("ce_weight", 1.0)),
+                                )
+                                auxiliary = fm
+                                flow_metrics = {}
+                            else:
+                                progress = optimizer_steps / max(planned_optimizer_steps, 1)
+                                on_policy_ratio = flow_on_policy_ratio(
+                                    str(specification.get("state_mode", "teacher")), progress
+                                )
+                                loss, flow_metrics, state, _ = model(
+                                    inputs, targets, state, outer * micro_steps, total_steps, micro_steps,
+                                    float(specification.get("beta", 0.0)), on_policy_ratio,
+                                    float(specification.get("fm_weight", 1.0)),
+                                    float(specification.get("endpoint_ce_weight", 1.0)),
+                                    float(specification.get("endpoint_cos_weight", 1.0)),
+                                )
+                                fm = flow_metrics["relative_velocity"]
+                                ce = flow_metrics["endpoint_ce"]
+                                auxiliary = flow_metrics["endpoint_cosine_loss"]
                         optimizer.zero_grad(set_to_none=True); loss.backward(); optimizer.step()
                 optimizer.swap_ema()
                 model.eval()
-                correct, total = evaluate_sudoku(model, eval_loader, total_steps, device)
+                evaluation = evaluate_sudoku(model, eval_loader, total_steps, device)
+                t0_accuracy = (
+                    flow_t0_endpoint_accuracy(
+                        model, eval_loader, device, float(config["conditions"][condition].get("beta", 0.0))
+                    )
+                    if config["conditions"][condition]["kind"] == "flow" else float("nan")
+                )
                 if rank == 0:
                     state_dict = {key.removeprefix("module."): value for key, value in _unwrap(model).state_dict().items()}
                     torch.save(state_dict, condition_dir / f"epoch_{epoch}.pt")
                     epoch_log = {
                         "epoch": epoch, "loss": float(loss.detach()), "ce": float(ce),
-                        "auxiliary": float(auxiliary), "eval_exact_match": correct / max(total, 1), "lr": lr,
+                        "auxiliary": float(auxiliary), "eval_exact_match": evaluation["exact_match"],
+                        "eval_cell_accuracy": evaluation["cell_accuracy"],
+                        "eval_constraint_violations": evaluation["constraint_violations"],
+                        "t0_endpoint_accuracy": t0_accuracy, "lr": lr,
+                        "optimizer_steps": optimizer_steps, "backbone_calls": backbone_calls,
                     }
+                    if flow_metrics:
+                        epoch_log |= {key: float(value) for key, value in flow_metrics.items()}
                     logs.append(epoch_log)
                     if wandb_run is not None:
                         wandb_run.log(epoch_log, step=optimizer_steps)
