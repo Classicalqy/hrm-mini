@@ -1,0 +1,22 @@
+name: sudoku
+dataset_name: ./downloaded-datasets/sudoku-extreme-full
+eval_dataset_name: ./downloaded-datasets/sudoku-extreme-full
+
+# Two-band setting with boundary k=55:
+# Easy: at most 55 blank cells.
+blank_max: 55
+num_base_puzzles: 1000
+repeat: 200
+augment: True
+
+# Evaluate only the two bands used in this setting.
+eval_sets:
+  easy:
+    split: test
+    eval_blank_max: 55
+  hard:
+    split: test
+    eval_blank_min: 56
+
+eval_num_base_puzzles: 10000
+eval_seed: 42
