@@ -95,9 +95,12 @@ def inferred_k55_config(condition: str) -> TrainConfig:
 
 
 def load_k55_config(seed_dir: Path, condition: str) -> TrainConfig:
-    """Prefer checkpoint-adjacent metadata, with a verified K55 config fallback."""
-    if (seed_dir / "model_config.json").is_file():
-        return load_config(seed_dir)
+    """Load plain metadata, bypassing legacy cyclic OmegaConf YAML objects."""
+    metadata_path = seed_dir / "model_config.json"
+    if metadata_path.is_file():
+        contents = metadata_path.read_text()
+        if "!!python/object:" not in contents and "omegaconf." not in contents:
+            return load_config(seed_dir)
     return inferred_k55_config(condition)
 
 

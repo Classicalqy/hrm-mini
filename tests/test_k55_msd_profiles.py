@@ -15,11 +15,24 @@ sys.modules.setdefault("coolname", coolname)
 from arch.trm import TRM
 from scripts.analyze_long_rollout_msd import RunDirectory
 from scripts.core_five_l_depth_long_rollout import advance_hrm_l, initial_hrm_state
-from scripts.k55_msd_profiles import discover_k55_runs, inferred_k55_config, k55_units
+from scripts.k55_msd_profiles import discover_k55_runs, inferred_k55_config, k55_units, load_k55_config
 from test_hrm_readout import tiny_config
 
 
 class K55MSDProfilesTest(unittest.TestCase):
+    def test_legacy_omegacon_metadata_uses_verified_condition_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            seed_dir = Path(temporary)
+            (seed_dir / "model_config.json").write_text(
+                "data: !!python/object:omegaconf.dictconfig.DictConfig\n"
+                "  _parent: &parent !!python/object:omegaconf.dictconfig.DictConfig\n"
+                "    _parent: *parent\n"
+            )
+            config = load_k55_config(seed_dir, "hard_k55_trm")
+        self.assertEqual(config.arch.name, "trm@TRM")
+        self.assertEqual((config.arch.__pydantic_extra__ or {})["L_cycles"], 6)
+        self.assertEqual((config.data.__pydantic_extra__ or {})["blank_min"], 56)
+
     def test_inferred_configs_match_the_four_checkpoint_architectures(self) -> None:
         expected = {
             "easy_k55_hrm": ("hrm@HRM", 2, 6),
