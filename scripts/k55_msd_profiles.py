@@ -162,7 +162,7 @@ def difficulty_of(condition: str) -> str:
 def make_loader(run: RunDirectory, requested_band: str):
     """Build the K55 evaluation loader using the config's named band definition."""
     from dataset.sudoku import collate_fn
-    from datasets import load_dataset
+    from datasets import Features, Value, load_dataset
 
     band = difficulty_of(run.condition) if requested_band == "matched" else requested_band
     if band not in ("easy", "hard"):
@@ -175,7 +175,20 @@ def make_loader(run: RunDirectory, requested_band: str):
     options = dict(eval_sets[band])
     split = options.pop("split", "test")
     source = data.get("eval_dataset_name") or data["dataset_name"]
-    dataset = load_dataset(source, split=split)
+    features = Features({
+        "source": Value("string"),
+        "question": Value("string"),
+        "answer": Value("string"),
+        "rating": Value("int64"),
+    })
+    try:
+        dataset = load_dataset(source, split=split, features=features)
+    except Exception as error:
+        cause = error.__cause__ or error
+        raise RuntimeError(
+            f"Failed to load K55 dataset {source!r}, split={split!r}: "
+            f"{type(cause).__name__}: {cause}"
+        ) from error
     lower = options.get("eval_blank_min")
     upper = options.get("eval_blank_max")
     if lower is not None or upper is not None:
