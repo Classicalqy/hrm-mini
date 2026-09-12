@@ -195,11 +195,13 @@ def advance_hrm_l(model: torch.nn.Module, state: tuple[torch.Tensor, torch.Tenso
                   phase: int, eval_l: int) -> tuple[tuple[torch.Tensor, torch.Tensor], int, bool]:
     """Advance exactly one L update and conditionally perform the H update."""
     h, l = state
-    l = model.L_level(l + h + embedding)  # type: ignore[attr-defined]
+    lower = model.L_level if hasattr(model, "L_level") else model.core  # type: ignore[attr-defined]
+    upper = model.H_level if hasattr(model, "H_level") else model.core  # type: ignore[attr-defined]
+    l = lower(l + h + embedding)
     phase += 1
     updated_h = phase == eval_l
     if updated_h:
-        h = model.H_level(h + l)  # type: ignore[attr-defined]
+        h = upper(h + l)
         phase = 0
     return (h, l), phase, updated_h
 
@@ -276,7 +278,7 @@ def unit_filename(unit: SweepUnit) -> str:
 
 def metadata_row(unit: SweepUnit, selected: dict[str, str], output_path: Path, samples: int, sample_seed: int,
                  manifest: str, lags: np.ndarray, updates: int, boundaries: np.ndarray) -> dict[str, object]:
-    completed_h, tail = expected_h_updates(unit.eval_l, updates) if unit.run.kind == "hrm" else (updates, 0)
+    completed_h, tail = expected_h_updates(unit.eval_l, updates) if unit.run.kind in ("hrm", "trm") else (updates, 0)
     return {
         "kind": unit.run.kind, "condition": unit.run.condition, "readout": unit.run.readout,
         "train_l": "" if unit.run.l_cycles is None else unit.run.l_cycles, "eval_l": unit.eval_l,
@@ -292,20 +294,23 @@ def collect_unit(unit: SweepUnit, selected: dict[str, str], fixed_x: torch.Tenso
                  manifest: str, lags: np.ndarray, updates: int, boundaries: np.ndarray, scheme: str,
                  progress: tqdm[Any]) -> dict[str, object]:
     output_path = args.output_dir / "per_puzzle_msd" / unit_filename(unit)
+    checkpoint = absolute_checkpoint(selected["checkpoint"])
     if output_path.is_file():
         cached = np.load(output_path, allow_pickle=False)
         if ("analysis_scheme" in cached.files and str(cached["analysis_scheme"].item()) == scheme
                 and int(cached["eval_l"].item()) == unit.eval_l
                 and np.array_equal(cached["lag_l_updates"], lags)
-                and np.array_equal(cached["segment_boundaries_l_updates"], boundaries)):
+                and np.array_equal(cached["segment_boundaries_l_updates"], boundaries)
+                and "checkpoint" in cached.files and str(cached["checkpoint"].item()) == str(checkpoint)
+                and "sample_manifest_sha256" in cached.files
+                and str(cached["sample_manifest_sha256"].item()) == manifest):
             return metadata_row(unit, selected, output_path, len(fixed_x), args.sample_seed, manifest, lags, updates, boundaries)
-    checkpoint = absolute_checkpoint(selected["checkpoint"])
     model = build_model(unit.run, checkpoint, metadata, args.device)
     batches: list[np.ndarray] = []
     origin_reference: np.ndarray | None = None
     for start in range(0, len(fixed_x), args.rollout_batch_size):
         x = fixed_x[start:start + args.rollout_batch_size].to(args.device, non_blocking=True)
-        if unit.run.kind == "hrm":
+        if unit.run.kind in ("hrm", "trm"):
             values, origins = collect_hrm_per_puzzle(model, x, unit.eval_l, lags, updates, boundaries, progress)
         else:
             values, origins = collect_rt_per_puzzle(model, x, lags, updates, boundaries, progress)
@@ -316,7 +321,7 @@ def collect_unit(unit: SweepUnit, selected: dict[str, str], fixed_x: torch.Tenso
             raise AssertionError("Rollout batches produced inconsistent origin counts.")
     assert origin_reference is not None
     all_values = np.concatenate(batches, axis=0)
-    if unit.run.kind == "hrm":
+    if unit.run.kind in ("hrm", "trm"):
         if not np.array_equal(all_values[:, 3], (all_values[:, 0] + all_values[:, 1]) / 2, equal_nan=True):
             raise AssertionError("[H,L] MSD identity failed.")
         states = np.asarray(STATE_NAMES)
@@ -324,7 +329,8 @@ def collect_unit(unit: SweepUnit, selected: dict[str, str], fixed_x: torch.Tenso
         states = np.asarray(("rt",))
     atomic_npz(output_path, msd=all_values, state_names=states, lag_l_updates=lags,
                segment_boundaries_l_updates=boundaries, origins=origin_reference,
-               analysis_scheme=np.asarray(scheme), eval_l=np.asarray(unit.eval_l), checkpoint=np.asarray(str(checkpoint)))
+               analysis_scheme=np.asarray(scheme), eval_l=np.asarray(unit.eval_l), checkpoint=np.asarray(str(checkpoint)),
+               sample_manifest_sha256=np.asarray(manifest))
     del model; gc.collect()
     if args.device.type == "cuda":
         torch.cuda.empty_cache()
@@ -528,7 +534,7 @@ def ratio_rows(metadata: list[dict[str, str]]) -> list[dict[str, object]]:
     """Calculate seed-level R=MSD_H/MSD_L while retaining exact H zeros."""
     rows: list[dict[str, object]] = []
     for meta in metadata:
-        if meta["kind"] != "hrm":
+        if meta["kind"] not in ("hrm", "trm"):
             continue
         with np.load(meta["per_puzzle_file"], allow_pickle=False) as arrays:
             names = [str(value) for value in arrays["state_names"]]

@@ -114,7 +114,7 @@ def core_runs(root: Path, seeds: tuple[int, ...]) -> list[RunDirectory]:
 def native_accuracy_with_count(
     model: torch.nn.Module, run: RunDirectory, loader: Iterable[tuple[torch.Tensor, torch.Tensor]], device: torch.device,
 ) -> tuple[float, float, int]:
-    if run.kind == "hrm":
+    if run.kind in ("hrm", "trm"):
         model.H_cycles = 2  # type: ignore[attr-defined]
         model.L_cycles = run.l_cycles  # type: ignore[attr-defined]
     exact = examples = correct_cells = cells = 0
@@ -408,7 +408,7 @@ def run_trajectory(
     lags = boundaries = origins = None
     for start in range(0, fixed_x.shape[0], args.rollout_batch_size):
         x = fixed_x[start:start + args.rollout_batch_size].to(args.device, non_blocking=True)
-        if run.kind == "hrm":
+        if run.kind in ("hrm", "trm"):
             values, current_lags, current_boundaries, current_origins = per_puzzle_hrm(
                 model, run, x, physical_boundaries, physical_lags, progress,
             )
@@ -424,7 +424,7 @@ def run_trajectory(
     assert lags is not None and boundaries is not None and origins is not None
     all_values = np.concatenate(batches, axis=0)
     states = np.asarray(("rt",) if run.kind == "rt" else STATE_NAMES)
-    if run.kind == "hrm":
+    if run.kind in ("hrm", "trm"):
         h, l, cat = all_values[:, 0], all_values[:, 1], all_values[:, 3]
         target = (h + l) / 2
         if not np.allclose(cat, target, rtol=0.0, atol=0.0, equal_nan=True):
