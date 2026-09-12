@@ -1,4 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
+
+import yaml
+from omegaconf import OmegaConf
 
 from test_time_scaling import (
     CONDITION_NAMES,
@@ -6,6 +11,7 @@ from test_time_scaling import (
     best_epoch_from_history,
     evaluation_spec,
     format_markdown_table,
+    load_checkpoint_config,
     parse_l_values,
     summarize_rows,
 )
@@ -16,6 +22,17 @@ class TestTimeScalingTests(unittest.TestCase):
         self.assertEqual(set(CONDITION_NAMES), {
             "easy_k55_hrm", "hard_k55_hrm", "easy_k55_trm", "hard_k55_trm", "easy_k55_rt", "hard_k55_rt",
         })
+
+    def test_loads_legacy_omegaconf_checkpoint_metadata(self):
+        config = {
+            "arch": {"name": "rt@RecurrentTransformer", "cycles": 7},
+            "data": OmegaConf.create({"name": "sudoku", "eval_sets": {}}),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metadata_path = Path(temp_dir) / "model_config.json"
+            metadata_path.write_text(yaml.dump(config))
+            loaded = load_checkpoint_config(Path(temp_dir))
+        self.assertEqual(loaded["data"], {"name": "sudoku", "eval_sets": {}})
 
     def test_hrm_and_trm_change_only_l_cycles(self):
         config = {"arch": {"name": "hrm@HRM", "H_cycles": 2, "L_cycles": 6, "hidden_size": 512}}

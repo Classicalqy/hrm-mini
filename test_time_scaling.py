@@ -75,8 +75,30 @@ def load_checkpoint_config(run_dir: Path) -> dict[str, Any]:
     metadata_path = run_dir / "model_config.json"
     if not metadata_path.is_file():
         raise FileNotFoundError(f"missing checkpoint metadata: {metadata_path}")
-    with metadata_path.open() as handle:
-        config = yaml.safe_load(handle)
+    contents = metadata_path.read_text()
+    try:
+        config = yaml.safe_load(contents)
+    except yaml.constructor.ConstructorError:
+        # train.py historically wrote Hydra DictConfig extras using yaml.dump,
+        # which adds OmegaConf Python-object tags. Checkpoint metadata is local
+        # experiment output, so reconstruct that legacy format then immediately
+        # reduce it to standard Python containers.
+        config = yaml.unsafe_load(contents)
+    try:
+        from omegaconf import DictConfig, ListConfig, OmegaConf
+
+        def to_builtin(value: Any) -> Any:
+            if isinstance(value, (DictConfig, ListConfig)):
+                return OmegaConf.to_container(value, resolve=True)
+            if isinstance(value, dict):
+                return {key: to_builtin(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [to_builtin(item) for item in value]
+            return value
+
+        config = to_builtin(config)
+    except ImportError:
+        pass
     if not isinstance(config, dict) or "arch" not in config or "data" not in config:
         raise ValueError(f"invalid checkpoint metadata: {metadata_path}")
     return config
