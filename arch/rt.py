@@ -1,4 +1,5 @@
-from typing import Any
+from collections.abc import Callable, Collection
+from typing import Any, Literal
 
 import torch
 from torch import nn
@@ -44,6 +45,29 @@ class RecurrentTransformer(nn.Module):
         # 1-step grad
         z = self.core(z + x)
         return dict(z=z.detach()), self.lm_head(z)  # Ensure no gradient moves across carry
+
+    def forward_with_trace(
+        self,
+        carry: Carry,
+        input_ids: Tensor,
+        trace_callback: Callable[[Literal["z"], Tensor], None],
+        events: Collection[Literal["z"]] = ("z",),
+    ) -> tuple[Carry, Tensor]:
+        """Inference-equivalent forward pass that reports requested recurrent states.
+
+        This mirrors HRM's trace API for deterministic rollout analysis while
+        keeping the ordinary ``forward`` path unchanged.
+        """
+        invalid_events = set(events) - {"z"}
+        if invalid_events:
+            raise ValueError(f"Unsupported trace events: {sorted(invalid_events)}")
+        x = self.embed(input_ids)
+        z = carry["z"]
+        for _ in range(self.cycles):
+            z = self.core(z + x)
+            if "z" in events:
+                trace_callback("z", z)
+        return dict(z=z.detach()), self.lm_head(z)
 
     @property
     def initial_carry(self) -> Carry:

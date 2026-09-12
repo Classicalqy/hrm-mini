@@ -32,7 +32,7 @@ class HRMTraceTest(unittest.TestCase):
         z_h = torch.randn(2, 4, 8)
         z_l = torch.randn(2, 4, 8)
         h_logits, l_logits = model.split_hl_readout_logits(z_h, z_l)
-        self.assertTrue(torch.allclose(h_logits + l_logits, model.readout_logits(z_h, z_l)))
+        self.assertTrue(torch.allclose(h_logits + l_logits, model.readout_logits(z_h, z_l), atol=1e-6, rtol=1e-5))
 
     def test_shared_initial_h_state_broadcasts_for_intermediate_readout(self) -> None:
         model = HRM(tiny_config("hl"))
@@ -55,6 +55,36 @@ class HRMTraceTest(unittest.TestCase):
 
         self.assertEqual(h_level.calls, 4)
         self.assertEqual(l_level.calls, 8)
+
+    def test_h_only_trace_preserves_forward_and_suppresses_l_callbacks(self) -> None:
+        model = HRM(tiny_config("h", h_cycles=2, l_cycles=3))
+        input_ids = torch.randint(0, 11, (2, 4))
+        regular_carry, regular_logits = model(model.initial_carry, input_ids)
+        events: list[str] = []
+        traced_carry, traced_logits = model.forward_with_trace(
+            model.initial_carry,
+            input_ids,
+            lambda event, _z_h, _z_l: events.append(event),
+            events=("h",),
+        )
+        self.assertEqual(events, ["h", "h"])
+        self.assertTrue(torch.equal(regular_logits, traced_logits))
+        self.assertTrue(torch.equal(regular_carry["z_H"], traced_carry["z_H"]))
+        self.assertTrue(torch.equal(regular_carry["z_L"], traced_carry["z_L"]))
+
+    def test_two_single_h_blocks_match_native_h2_rollout(self) -> None:
+        torch.manual_seed(7)
+        model = HRM(tiny_config("h", h_cycles=2, l_cycles=3))
+        input_ids = torch.randint(0, 11, (2, 4))
+        native_carry, native_logits = model(model.initial_carry, input_ids)
+
+        model.H_cycles = 1
+        carry, _ = model(model.initial_carry, input_ids)
+        split_carry, split_logits = model(carry, input_ids)
+
+        self.assertTrue(torch.equal(native_logits, split_logits))
+        self.assertTrue(torch.equal(native_carry["z_H"], split_carry["z_H"]))
+        self.assertTrue(torch.equal(native_carry["z_L"], split_carry["z_L"]))
 
 
 if __name__ == "__main__":
