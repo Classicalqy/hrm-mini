@@ -10,6 +10,7 @@ import argparse
 import csv
 import importlib
 import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,6 @@ from typing import Any, Iterable
 
 import numpy as np
 import torch
-import yaml
 from torch import nn
 import tqdm
 
@@ -55,6 +55,7 @@ class Run:
     seed: int
     directory: Path
     config: dict[str, Any]
+    steps_per_epoch: int
 
 
 def parse_l_values(value: str) -> tuple[int, ...]:
@@ -71,42 +72,41 @@ def load_module(identifier: str):
     return getattr(importlib.import_module(module_path), class_name)
 
 
-def load_checkpoint_config(run_dir: Path) -> dict[str, Any]:
+def load_condition_config(condition: str) -> dict[str, Any]:
+    """Compose the committed experiment config instead of deserializing it from a checkpoint."""
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    config_dir = Path(__file__).with_name("config").resolve()
+    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+        config = compose(config_name=condition)
+    result = OmegaConf.to_container(config, resolve=True)
+    if not isinstance(result, dict):
+        raise ValueError(f"invalid Hydra configuration for {condition}")
+    return result
+
+
+def steps_per_epoch_from_metadata(run_dir: Path) -> int:
+    """Extract the scalar needed to map W&B steps to saved epoch filenames.
+
+    Older train.py versions wrote OmegaConf objects with cyclic parent pointers
+    into model_config.json. Parsing the whole YAML is therefore impossible, but
+    this top-level run_metadata scalar is emitted as ordinary YAML.
+    """
     metadata_path = run_dir / "model_config.json"
     if not metadata_path.is_file():
         raise FileNotFoundError(f"missing checkpoint metadata: {metadata_path}")
     contents = metadata_path.read_text()
-    try:
-        config = yaml.safe_load(contents)
-    except yaml.constructor.ConstructorError:
-        # train.py historically wrote Hydra DictConfig extras using yaml.dump,
-        # which adds OmegaConf Python-object tags. Checkpoint metadata is local
-        # experiment output, so reconstruct that legacy format then immediately
-        # reduce it to standard Python containers.
-        config = yaml.unsafe_load(contents)
-    try:
-        from omegaconf import DictConfig, ListConfig, OmegaConf
-
-        def to_builtin(value: Any) -> Any:
-            if isinstance(value, (DictConfig, ListConfig)):
-                return OmegaConf.to_container(value, resolve=True)
-            if isinstance(value, dict):
-                return {key: to_builtin(item) for key, item in value.items()}
-            if isinstance(value, list):
-                return [to_builtin(item) for item in value]
-            return value
-
-        config = to_builtin(config)
-    except ImportError:
-        pass
-    if not isinstance(config, dict) or "arch" not in config or "data" not in config:
-        raise ValueError(f"invalid checkpoint metadata: {metadata_path}")
-    return config
+    match = re.search(r"^  steps_per_epoch_per_rank:\s*(\d+)\s*$", contents, flags=re.MULTILINE)
+    if match is None or int(match.group(1)) <= 0:
+        raise ValueError(f"missing positive run_metadata.steps_per_epoch_per_rank in {metadata_path}")
+    return int(match.group(1))
 
 
 def discover_runs(checkpoint_root: Path, seeds: Iterable[int], conditions: Iterable[str]) -> list[Run]:
     runs: list[Run] = []
     selected_conditions = set(conditions)
+    condition_configs = {condition: load_condition_config(condition) for condition in selected_conditions}
     for condition, model, train_band in CONDITIONS:
         if condition not in selected_conditions:
             continue
@@ -115,11 +115,14 @@ def discover_runs(checkpoint_root: Path, seeds: Iterable[int], conditions: Itera
             config_path = seed_dir / "model_config.json"
             if not config_path.is_file():
                 raise FileNotFoundError(f"missing run metadata for {condition}, seed {seed}: {config_path}")
-            config = load_checkpoint_config(seed_dir)
+            config = condition_configs[condition]
             architecture = str(config["arch"]["name"]).rsplit("@", 1)[-1]
             if architecture != EXPECTED_ARCHITECTURES[model]:
                 raise ValueError(f"{seed_dir} contains {architecture}, expected {EXPECTED_ARCHITECTURES[model]}")
-            runs.append(Run(condition, model, train_band, seed, seed_dir, config))
+            runs.append(Run(
+                condition, model, train_band, seed, seed_dir, config,
+                steps_per_epoch_from_metadata(seed_dir),
+            ))
     return runs
 
 
@@ -171,9 +174,8 @@ def select_best_checkpoints(runs: list[Run], entity: str, metric: str) -> tuple[
                 "Use a unique MLP_TASK_NAME or remove duplicate W&B runs before evaluating."
             )
         remote = matches[0]
-        steps_per_epoch = int(run.config.get("run_metadata", {}).get("steps_per_epoch_per_rank", 0))
         epoch, step, score = best_epoch_from_history(
-            remote.scan_history(keys=["_step", metric]), metric, steps_per_epoch
+            remote.scan_history(keys=["_step", metric]), metric, run.steps_per_epoch
         )
         checkpoint_path = run.directory / f"epoch_{epoch}.pt"
         if not checkpoint_path.is_file():
