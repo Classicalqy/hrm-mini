@@ -551,7 +551,7 @@ def main() -> None:
     parser.add_argument("--rollout-batch-size", type=int, default=64, help="Puzzle batch size during core-five rollout collection.")
     parser.add_argument("--l-depth-values", default="6,8,16,32,64,128,256,512,1024", help="Comma-separated H2L6 inference L values for --profile core-five-l-depth.")
     parser.add_argument("--reference-best-checkpoints", type=Path, default=Path("results/core_five_long_rollout/final_absolute/best_checkpoints.csv"), help="Native-L6 selected checkpoints reused by --profile core-five-l-depth.")
-    parser.add_argument("--k55-split", default="test_hard", help="Dataset split used for K55 best-epoch selection and MSD samples (default: test_hard).")
+    parser.add_argument("--k55-split", choices=("matched", "easy", "hard"), default="matched", help="K55 evaluation band. matched uses easy puzzles for easy-trained models and hard puzzles for hard-trained models.")
     args = parser.parse_args()
     if args.profile in ("core-five", "core-five-l-depth", "core-five-l-depth-min-outer16", "core-h-l-clock", "k55-core", "k55-l-depth"):
         from scripts.core_five_long_rollout import main_core, parse_seeds

@@ -15,11 +15,27 @@ sys.modules.setdefault("coolname", coolname)
 from arch.trm import TRM
 from scripts.analyze_long_rollout_msd import RunDirectory
 from scripts.core_five_l_depth_long_rollout import advance_hrm_l, initial_hrm_state
-from scripts.k55_msd_profiles import discover_k55_runs, k55_units
+from scripts.k55_msd_profiles import discover_k55_runs, inferred_k55_config, k55_units
 from test_hrm_readout import tiny_config
 
 
 class K55MSDProfilesTest(unittest.TestCase):
+    def test_inferred_configs_match_the_four_checkpoint_architectures(self) -> None:
+        expected = {
+            "easy_k55_hrm": ("hrm@HRM", 2, 6),
+            "easy_k55_trm": ("trm@TRM", 2, 6),
+            "easy_k55_hrm_h2l1": ("hrm@HRM", 2, 1),
+            "easy_k55_rt": ("rt@RecurrentTransformer", None, None),
+        }
+        for condition, (name, h_cycles, l_cycles) in expected.items():
+            with self.subTest(condition=condition):
+                config = inferred_k55_config(condition)
+                arch = config.arch.__pydantic_extra__ or {}
+                self.assertEqual(config.arch.name, name)
+                self.assertEqual(arch.get("H_cycles"), h_cycles)
+                self.assertEqual(arch.get("L_cycles"), l_cycles)
+                self.assertEqual(config.data.name, "sudoku")
+
     def test_trm_trace_and_manual_l_updates_match_native_forward(self) -> None:
         torch.manual_seed(11)
         config = tiny_config("h", h_cycles=2, l_cycles=3)

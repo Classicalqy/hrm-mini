@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 import hashlib
 import json
 import math
@@ -14,9 +15,10 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
-from scripts.analyze_long_rollout_msd import RunDirectory, epoch_checkpoints, load_config, load_module
+from scripts.analyze_long_rollout_msd import RunDirectory, epoch_checkpoints, load_config
 from scripts.core_five_long_rollout import (
     fixed_random_samples,
     native_accuracy_with_count,
@@ -40,7 +42,8 @@ from scripts.core_five_l_depth_long_rollout import (
     rollout_spec,
     summarize,
 )
-from scripts.analyze_long_rollout_msd import build_model, data_kwargs
+from train import TrainConfig
+from scripts.analyze_long_rollout_msd import build_model
 
 
 K55_DIRECTORY = re.compile(r"(?P<difficulty>easy|hard)_k55_(?P<model>hrm_h2l1|hrm|trm|rt)$")
@@ -51,6 +54,51 @@ MODEL_ORDER = ("hrm", "trm", "hrm_h2l1", "rt")
 
 def condition_name(difficulty: str, model: str) -> str:
     return f"{difficulty}_k55_{model}"
+
+
+def inferred_k55_config(condition: str) -> TrainConfig:
+    """Reconstruct the immutable training config when only a state dict was downloaded."""
+    match = K55_DIRECTORY.fullmatch(condition)
+    if match is None:
+        raise ValueError(f"Not a K55 condition: {condition}")
+    difficulty, model_name = match["difficulty"], match["model"]
+    if model_name == "rt":
+        arch = {
+            "name": "rt@RecurrentTransformer", "num_layers": 4, "hidden_size": 512,
+            "intermediate_size": 2048, "head_dim": 64, "norm_eps": 1e-6,
+            "rope_theta": 10000.0, "cycles": 7, "bptt": True, "forward_dtype": "bfloat16",
+        }
+    else:
+        arch = {
+            "name": "trm@TRM" if model_name == "trm" else "hrm@HRM",
+            "num_layers": 2, "hidden_size": 512, "intermediate_size": 2048,
+            "head_dim": 64, "norm_eps": 1e-6, "rope_theta": 10000.0,
+            "H_cycles": 2, "L_cycles": 1 if model_name == "hrm_h2l1" else 6,
+            "bptt": True, "forward_dtype": "bfloat16",
+        }
+    data = {
+        "name": "sudoku", "dataset_name": "./downloaded-datasets/sudoku-extreme-full",
+        "eval_dataset_name": "./downloaded-datasets/sudoku-extreme-full",
+        "num_base_puzzles": 1000, "repeat": 200, "augment": True,
+        "eval_sets": {
+            "easy": {"split": "test", "eval_blank_max": 55},
+            "hard": {"split": "test", "eval_blank_min": 56},
+        },
+        "eval_num_base_puzzles": 10000, "eval_seed": 42,
+    }
+    data["blank_max" if difficulty == "easy" else "blank_min"] = 55 if difficulty == "easy" else 56
+    return TrainConfig(**{
+        "arch": arch, "data": data, "seeds": [1, 2, 3], "cycles_per_data": 16,
+        "epochs": 20, "local_batch_size": 96, "lr": 1e-4, "lr_warmup_steps": 2000,
+        "lr_min_ratio": 1.0, "beta1": .9, "beta2": .95, "weight_decay": 1.0, "ema": .999,
+    })
+
+
+def load_k55_config(seed_dir: Path, condition: str) -> TrainConfig:
+    """Prefer checkpoint-adjacent metadata, with a verified K55 config fallback."""
+    if (seed_dir / "model_config.json").is_file():
+        return load_config(seed_dir)
+    return inferred_k55_config(condition)
 
 
 def discover_k55_runs(root: Path, seeds: tuple[int, ...]) -> list[RunDirectory]:
@@ -70,7 +118,7 @@ def discover_k55_runs(root: Path, seeds: tuple[int, ...]) -> list[RunDirectory]:
             seed = int(seed_match["seed"])
             if seed not in seeds:
                 continue
-            config = load_config(seed_dir)
+            config = load_k55_config(seed_dir, condition_dir.name)
             arch = config.arch.__pydantic_extra__ or {}
             expected_arch = {
                 "hrm": "hrm@HRM",
@@ -108,9 +156,42 @@ def difficulty_of(condition: str) -> str:
     return condition.split("_", 1)[0]
 
 
-def make_loader(run: RunDirectory, split: str):
-    create = load_module(f"dataset.{run.config.data.name}@create_dataloader")
-    return create(split, run.config.local_batch_size, rank=0, world_size=1, **data_kwargs(run.config))
+def make_loader(run: RunDirectory, requested_band: str):
+    """Build the K55 evaluation loader using the config's named band definition."""
+    from dataset.sudoku import collate_fn
+    from datasets import load_dataset
+
+    band = difficulty_of(run.condition) if requested_band == "matched" else requested_band
+    if band not in ("easy", "hard"):
+        raise ValueError(f"Unsupported K55 evaluation band: {requested_band}")
+    data = dict(run.config.data.__pydantic_extra__ or {})
+    eval_sets = data.get("eval_sets") or {
+        "easy": {"split": "test", "eval_blank_max": 55},
+        "hard": {"split": "test", "eval_blank_min": 56},
+    }
+    options = dict(eval_sets[band])
+    split = options.pop("split", "test")
+    source = data.get("eval_dataset_name") or data["dataset_name"]
+    dataset = load_dataset(source, split=split)
+    lower = options.get("eval_blank_min")
+    upper = options.get("eval_blank_max")
+    if lower is not None or upper is not None:
+        minimum = int(lower) if lower is not None else 0
+        maximum = int(upper) if upper is not None else 81
+        dataset = dataset.filter(lambda question: minimum <= question.count(".") <= maximum, input_columns="question")
+    requested = data.get("eval_num_base_puzzles")
+    if requested is not None:
+        requested = int(requested)
+        if len(dataset) < requested:
+            raise ValueError(f"K55 {band} requested {requested} evaluation puzzles but only {len(dataset)} are available.")
+        dataset = dataset.shuffle(seed=int(data.get("eval_seed", 42))).select(range(requested))
+    sampler = DistributedSampler(dataset, rank=0, num_replicas=1, shuffle=False, drop_last=True, seed=42)
+    loader = DataLoader(
+        dataset, batch_size=run.config.local_batch_size,
+        collate_fn=partial(collate_fn, augment=False), sampler=sampler,
+        drop_last=True, pin_memory=True, num_workers=1, persistent_workers=True, prefetch_factor=2,
+    )
+    return loader, {"vocab_size": 10, "seq_len": 82, "is_causal": False}
 
 
 def select_k55_best(runs: list[RunDirectory], output_dir: Path, device: torch.device, split: str) -> list[dict[str, object]]:
