@@ -29,7 +29,7 @@ from pathlib import Path
 import re
 import sys
 import time
-from typing import Any, Iterable, Literal
+from typing import TYPE_CHECKING, Any, Iterable, Literal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -44,7 +44,6 @@ import yaml
 from tqdm import tqdm
 
 from arch.layers import Carry
-from train import TrainConfig, load_module, run_inference
 from scripts.long_rollout_msd_utils import (
     STATE_NAMES,
     log_spaced_lags,
@@ -54,6 +53,23 @@ from scripts.long_rollout_msd_utils import (
     segment_lags,
     state_msd,
 )
+
+if TYPE_CHECKING:
+    from train import TrainConfig
+
+
+def load_module(path: str) -> Any:
+    """Import training machinery only for workflows that actually evaluate models."""
+    from train import load_module as train_load_module
+
+    return train_load_module(path)
+
+
+def run_inference(*args: Any, **kwargs: Any) -> Any:
+    """Keep plots-only independent from optional training-time dependencies."""
+    from train import run_inference as train_run_inference
+
+    return train_run_inference(*args, **kwargs)
 
 
 H_CYCLES = 2
@@ -100,6 +116,8 @@ def data_kwargs(config: TrainConfig) -> dict[str, Any]:
 
 
 def load_config(directory: Path) -> TrainConfig:
+    from train import TrainConfig
+
     path = directory / "model_config.json"
     if not path.is_file():
         raise FileNotFoundError(f"Missing model config: {path}")
@@ -552,7 +570,10 @@ def main() -> None:
     parser.add_argument("--l-depth-values", default="6,8,16,32,64,128,256,512,1024", help="Comma-separated H2L6 inference L values for --profile core-five-l-depth.")
     parser.add_argument("--reference-best-checkpoints", type=Path, default=Path("results/core_five_long_rollout/final_absolute/best_checkpoints.csv"), help="Native-L6 selected checkpoints reused by --profile core-five-l-depth.")
     parser.add_argument("--k55-split", choices=("matched", "easy", "hard"), default="matched", help="K55 evaluation band. matched uses easy puzzles for easy-trained models and hard puzzles for hard-trained models.")
+    parser.add_argument("--plots-only", action="store_true", help="For k55-l-depth, regenerate figures from an existing merged output without checkpoints or rollout.")
     args = parser.parse_args()
+    if args.plots_only and args.profile != "k55-l-depth":
+        parser.error("--plots-only is only supported with --profile k55-l-depth.")
     if args.profile in ("core-five", "core-five-l-depth", "core-five-l-depth-min-outer16", "core-h-l-clock", "k55-core", "k55-l-depth"):
         from scripts.core_five_long_rollout import main_core, parse_seeds
         output_defaults = {
@@ -580,7 +601,7 @@ def main() -> None:
         if args.shard_index is not None and not 0 <= args.shard_index < args.num_shards:
             parser.error(f"--shard-index must be in [0, {args.num_shards - 1}].")
         args.device = torch.device(args.device)
-        if not args.merge_from and args.device.type == "cuda" and not torch.cuda.is_available():
+        if not args.merge_from and not args.plots_only and args.device.type == "cuda" and not torch.cuda.is_available():
             parser.error("CUDA is unavailable; pass --device cpu only for a very small smoke test.")
         if args.profile == "core-h-l-clock":
             if not args.reference_best_checkpoints.is_absolute():
